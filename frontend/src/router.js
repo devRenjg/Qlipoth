@@ -1,0 +1,14 @@
+import { createRouter, createWebHistory } from 'vue-router'
+
+const routes = [
+  { path: '/', redirect: '/chat' },
+  { path: '/chat', component: () => import('./views/Chat.vue') },
+  { path: '/upload', component: () => import('./views/Upload.vue') },
+  { path: '/documents', component: () => import('./views/Documents.vue') },
+  { path: '/settings', component: () => import('./views/Settings.vue') },
+]
+
+export default createRouter({
+  history: createWebHistory(),
+  routes,
+})

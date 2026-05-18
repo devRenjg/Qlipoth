@@ -1,0 +1,10 @@
+node_modules/
+__pycache__/
+*.pyc
+.vite/
+dist/
+backend/metadata.db
+backend/config.json
+backend/knowledge_base/
+frontend/node_modules/
+.claude/
