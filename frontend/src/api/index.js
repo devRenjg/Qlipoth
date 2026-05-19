@@ -12,6 +12,45 @@ export function queryKnowledgeBase(question) {
   return api.post('/query', { question })
 }
 
+export function queryKnowledgeBaseStream(question, { onMeta, onChunk, onDone, onError }) {
+  const controller = new AbortController()
+  fetch('/api/query/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question }),
+    signal: controller.signal,
+  }).then(async (resp) => {
+    if (!resp.ok) {
+      const text = await resp.text()
+      onError(text)
+      return
+    }
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop()
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const msg = JSON.parse(line.slice(6))
+          if (msg.type === 'meta') onMeta(msg.data)
+          else if (msg.type === 'chunk') onChunk(msg.data)
+          else if (msg.type === 'done') onDone(msg.data)
+          else if (msg.type === 'error') onError(msg.data)
+        } catch {}
+      }
+    }
+  }).catch((err) => {
+    if (err.name !== 'AbortError') onError(err.message)
+  })
+  return controller
+}
+
 export function simpleSearch(q) {
   return api.get('/search', { params: { q } })
 }

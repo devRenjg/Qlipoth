@@ -19,12 +19,3 @@ async def init_db():
             )
         """)
         await db.commit()
-
-
-async def get_db():
-    db = await aiosqlite.connect(DB_PATH)
-    db.row_factory = aiosqlite.Row
-    try:
-        yield db
-    finally:
-        await db.close()

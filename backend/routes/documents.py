@@ -2,13 +2,11 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import aiosqlite
-from config import load_settings, save_settings, Settings
+from config import load_settings, save_settings
 from database import DB_PATH
 from searcher import read_file_content
 
 router = APIRouter(tags=["documents"])
-settings = load_settings()
-KB_DIR = Path(settings.knowledge_base_dir)
 
 
 @router.get("/documents")
@@ -36,6 +34,7 @@ async def get_document(doc_id: int):
 
 @router.delete("/documents/{doc_id}")
 async def delete_document(doc_id: int):
+    kb_dir = Path(load_settings().knowledge_base_dir)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
@@ -43,7 +42,7 @@ async def delete_document(doc_id: int):
         if not row:
             raise HTTPException(404, "文档不存在")
         doc = dict(row)
-        file_path = KB_DIR / doc["stored_path"]
+        file_path = kb_dir / doc["stored_path"]
         if file_path.exists():
             file_path.unlink()
         await db.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
@@ -53,8 +52,9 @@ async def delete_document(doc_id: int):
 
 class SettingsUpdate(BaseModel):
     llm_api_key: str = ""
-    llm_base_url: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4o"
+    llm_base_url: str = "https://api.deepseek.com"
+    llm_model: str = "deepseek-chat"
+    llm_api_format: str = "openai"
 
 
 @router.get("/settings")
@@ -64,6 +64,7 @@ async def get_settings():
         "llm_api_key": s.llm_api_key[:8] + "***" if len(s.llm_api_key) > 8 else "",
         "llm_base_url": s.llm_base_url,
         "llm_model": s.llm_model,
+        "llm_api_format": s.llm_api_format,
     }
 
 
@@ -73,5 +74,6 @@ async def update_settings(data: SettingsUpdate):
     s.llm_api_key = data.llm_api_key
     s.llm_base_url = data.llm_base_url
     s.llm_model = data.llm_model
+    s.llm_api_format = data.llm_api_format
     save_settings(s)
     return {"message": "设置已保存"}

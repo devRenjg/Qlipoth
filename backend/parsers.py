@@ -1,8 +1,7 @@
 from pathlib import Path
 from docx import Document as DocxDocument
-from openpyxl import load_workbook
+from python_calamine import CalamineWorkbook
 from pptx import Presentation
-import markdown
 
 
 def parse_docx(file_path: str) -> str:
@@ -27,24 +26,98 @@ def parse_docx(file_path: str) -> str:
 
 
 def parse_xlsx(file_path: str) -> str:
-    wb = load_workbook(file_path, read_only=True, data_only=True)
+    wb = CalamineWorkbook.from_path(file_path)
     lines = []
-    for sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
+    for sheet_name in wb.sheet_names:
+        data = wb.get_sheet_by_name(sheet_name).to_python()
+        if not data:
+            continue
         lines.append(f"## {sheet_name}")
         lines.append("")
-        rows = list(ws.iter_rows(values_only=True))
-        if not rows:
-            continue
-        headers = [str(c) if c is not None else "" for c in rows[0]]
-        lines.append("| " + " | ".join(headers) + " |")
-        lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
-        for row in rows[1:]:
-            cells = [str(c) if c is not None else "" for c in row]
-            lines.append("| " + " | ".join(cells) + " |")
-        lines.append("")
-    wb.close()
+
+        max_col = max(len(row) for row in data)
+        normalized = []
+        for row in data:
+            cells = []
+            for val in row:
+                if val is None:
+                    cells.append("")
+                else:
+                    s = str(val).replace("\n", " ").replace("\r", " ").replace("|", "\\|")
+                    cells.append(s)
+            while len(cells) < max_col:
+                cells.append("")
+            normalized.append(cells)
+
+        groups = _split_column_groups(normalized)
+        if groups:
+            for group in groups:
+                lines.extend(_render_table(group))
+                lines.append("")
+        else:
+            lines.extend(_render_table(normalized))
+            lines.append("")
     return "\n".join(lines)
+
+
+def _split_column_groups(rows: list[list[str]]) -> list[list[list[str]]] | None:
+    """Split a wide table into groups separated by empty columns."""
+    if not rows or len(rows[0]) <= 6:
+        return None
+
+    col_count = len(rows[0])
+    empty_cols = []
+    for col_idx in range(col_count):
+        if all(row[col_idx].strip() == "" for row in rows):
+            empty_cols.append(col_idx)
+
+    if not empty_cols:
+        return None
+
+    boundaries = []
+    start = 0
+    for ec in empty_cols:
+        if ec > start:
+            boundaries.append((start, ec))
+        start = ec + 1
+    if start < col_count:
+        boundaries.append((start, col_count))
+
+    if len(boundaries) <= 1:
+        return None
+
+    groups = []
+    for col_start, col_end in boundaries:
+        group = []
+        for row in rows:
+            group_row = row[col_start:col_end]
+            if any(cell.strip() for cell in group_row):
+                group.append(group_row)
+        if group:
+            groups.append(group)
+    return groups
+
+
+def _render_table(rows: list[list[str]]) -> list[str]:
+    """Render rows as a markdown table."""
+    if not rows:
+        return []
+    col_count = max(len(row) for row in rows)
+    lines = []
+    headers = rows[0]
+    while len(headers) < col_count:
+        headers.append("")
+    lines.append("| " + " | ".join(headers) + " |")
+    lines.append("| " + " | ".join(["---"] * col_count) + " |")
+    for row in rows[1:]:
+        while len(row) < col_count:
+            row.append("")
+        lines.append("| " + " | ".join(row) + " |")
+    return lines
+
+
+def parse_xls(file_path: str) -> str:
+    return parse_xlsx(file_path)
 
 
 def parse_pptx(file_path: str) -> str:
@@ -62,21 +135,17 @@ def parse_pptx(file_path: str) -> str:
     return "\n".join(lines)
 
 
-def parse_txt(file_path: str) -> str:
-    return Path(file_path).read_text(encoding="utf-8")
-
-
-def parse_markdown(file_path: str) -> str:
+def parse_text(file_path: str) -> str:
     return Path(file_path).read_text(encoding="utf-8")
 
 
 PARSERS = {
     ".docx": parse_docx,
     ".xlsx": parse_xlsx,
-    ".xls": parse_xlsx,
+    ".xls": parse_xls,
     ".pptx": parse_pptx,
-    ".txt": parse_txt,
-    ".md": parse_markdown,
+    ".txt": parse_text,
+    ".md": parse_text,
 }
 
 

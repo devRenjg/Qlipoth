@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 from routes import upload, query, documents
 
-app = FastAPI(title="Qlipoth", version="1.0.0")
+app = FastAPI(title="克里珀 - 大型活动保障知识库", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,4 +28,10 @@ if __name__ == "__main__":
     from config import load_settings
 
     settings = load_settings()
-    uvicorn.run("main:app", host=settings.host, port=settings.port, reload=True)
+    uvicorn.run(
+        "main:app",
+        host=settings.host,
+        port=settings.port,
+        reload=True,
+        reload_dirs=[".", "routes"],
+    )

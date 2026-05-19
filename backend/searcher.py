@@ -4,9 +4,6 @@ from pathlib import Path
 from dataclasses import dataclass
 from config import load_settings
 
-settings = load_settings()
-KB_DIR = settings.knowledge_base_dir
-
 
 @dataclass
 class SearchResult:
@@ -17,13 +14,53 @@ class SearchResult:
     context_after: list[str]
 
 
+def _get_kb_dir() -> str:
+    return load_settings().knowledge_base_dir
+
+
+def _expand_keywords(keywords: list[str]) -> list[str]:
+    """Expand compound keywords into shorter sub-terms for better grep matching.
+
+    LLM tends to generate compound terms like '直播值班' or '部门统计' that don't
+    appear as-is in documents. We keep the original and also add shorter segments.
+    """
+    import re
+    expanded = []
+    seen = set()
+    for kw in keywords:
+        kw = kw.strip()
+        if not kw or kw in seen:
+            continue
+        seen.add(kw)
+        expanded.append(kw)
+        if len(kw) <= 2:
+            continue
+        parts = re.findall(r'[a-zA-Z0-9]+|[一-鿿]+', kw)
+        for part in parts:
+            if len(part) <= 1:
+                continue
+            if part[0] >= '一' and len(part) >= 2:
+                for i in range(len(part) - 1):
+                    bigram = part[i:i+2]
+                    if bigram not in seen:
+                        seen.add(bigram)
+                        expanded.append(bigram)
+            elif part not in seen:
+                seen.add(part)
+                expanded.append(part)
+    return expanded
+
+
 def grep_search(keywords: list[str], file_pattern: str = "*", context_lines: int = 3) -> list[SearchResult]:
     results = []
-    kb_path = Path(KB_DIR)
+    kb_dir = _get_kb_dir()
+    kb_path = Path(kb_dir)
     if not kb_path.exists():
         return results
 
-    for keyword in keywords:
+    expanded = _expand_keywords(keywords)
+
+    for keyword in expanded:
         try:
             cmd = [
                 "grep", "-rni",
@@ -36,7 +73,7 @@ def grep_search(keywords: list[str], file_pattern: str = "*", context_lines: int
                 cmd, capture_output=True, text=True, timeout=10, encoding="utf-8"
             )
             if proc.returncode == 0:
-                results.extend(_parse_grep_output(proc.stdout, context_lines))
+                results.extend(_parse_grep_output(proc.stdout, kb_dir))
         except (subprocess.TimeoutExpired, FileNotFoundError):
             results.extend(_fallback_search(keyword, kb_path, file_pattern, context_lines))
 
@@ -50,7 +87,7 @@ def grep_search(keywords: list[str], file_pattern: str = "*", context_lines: int
     return unique
 
 
-def _parse_grep_output(output: str, context_lines: int) -> list[SearchResult]:
+def _parse_grep_output(output: str, kb_dir: str) -> list[SearchResult]:
     results = []
     blocks = output.strip().split("--\n")
     for block in blocks:
@@ -58,23 +95,38 @@ def _parse_grep_output(output: str, context_lines: int) -> list[SearchResult]:
         for line in lines:
             if not line:
                 continue
-            parts = line.split(":", 2)
-            if len(parts) >= 3:
-                file_path = parts[0]
-                try:
-                    line_num = int(parts[1])
-                except ValueError:
-                    continue
-                content = parts[2]
-                rel_path = os.path.relpath(file_path, KB_DIR)
-                results.append(SearchResult(
-                    file=rel_path,
-                    line_number=line_num,
-                    content=content.strip(),
-                    context_before=[],
-                    context_after=[],
-                ))
+            file_path, line_num, content = _split_grep_line(line)
+            if file_path is None:
+                continue
+            rel_path = os.path.relpath(file_path, kb_dir)
+            results.append(SearchResult(
+                file=rel_path,
+                line_number=line_num,
+                content=content.strip(),
+                context_before=[],
+                context_after=[],
+            ))
     return results
+
+
+def _split_grep_line(line: str):
+    """Parse a grep output line, handling Windows drive letters (e.g. C:\\path:10:content)."""
+    # Skip the drive letter prefix if present (e.g. "C:")
+    offset = 0
+    if len(line) >= 2 and line[1] == ':' and line[0].isalpha():
+        offset = 2
+
+    # Find file_path:line_number:content after the drive prefix
+    rest = line[offset:]
+    parts = rest.split(":", 2)
+    if len(parts) < 3:
+        return None, None, None
+    file_path = line[:offset] + parts[0]
+    try:
+        line_num = int(parts[1])
+    except ValueError:
+        return None, None, None
+    return file_path, line_num, parts[2]
 
 
 def _fallback_search(keyword: str, kb_path: Path, file_pattern: str, context_lines: int) -> list[SearchResult]:
@@ -105,25 +157,10 @@ def _fallback_search(keyword: str, kb_path: Path, file_pattern: str, context_lin
 
 
 def read_file_content(file_path: str, start_line: int = 0, end_line: int = -1) -> str:
-    full_path = Path(KB_DIR) / file_path
+    full_path = Path(_get_kb_dir()) / file_path
     if not full_path.exists():
         return ""
     lines = full_path.read_text(encoding="utf-8").splitlines()
     if end_line == -1:
         end_line = len(lines)
     return "\n".join(lines[start_line:end_line])
-
-
-def list_files() -> list[dict]:
-    kb_path = Path(KB_DIR)
-    if not kb_path.exists():
-        return []
-    files = []
-    for f in kb_path.rglob("*"):
-        if f.is_file():
-            files.append({
-                "path": str(f.relative_to(kb_path)),
-                "size": f.stat().st_size,
-                "name": f.name,
-            })
-    return files
