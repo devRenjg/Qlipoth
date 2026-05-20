@@ -34,23 +34,14 @@
       <div v-for="(msg, i) in messages" :key="i" :class="['message', msg.role]">
         <div class="message-content">
           <div class="message-text" v-html="msg.html || msg.text"></div>
-          <div v-if="msg.sources && msg.sources.length" class="message-sources">
-            <el-collapse>
-              <el-collapse-item title="引用来源">
-                <div v-for="(s, j) in msg.sources" :key="j" class="source-item">
-                  <code>{{ s.file }}:{{ s.line }}</code> {{ s.content }}
-                </div>
-              </el-collapse-item>
-            </el-collapse>
-          </div>
           <div v-if="msg.timing" class="message-timing">
-            耗时 {{ msg.timing.total }}s（策略 {{ msg.timing.strategy }}s + 搜索 {{ msg.timing.search }}s + 生成 {{ msg.timing.answer }}s）
+            思考耗时 {{ msg.timing.total }}s（分析 {{ msg.timing.strategy }}s + 检索 {{ msg.timing.search }}s + 组织 {{ msg.timing.answer }}s）
           </div>
         </div>
       </div>
       <div v-if="loading && messages[messages.length-1]?.text === ''" class="message assistant">
         <div class="message-content">
-          <el-icon class="loading-icon"><Loading /></el-icon> 正在搜索知识库...
+          <el-icon class="loading-icon"><Loading /></el-icon> 正在整理思路...
         </div>
       </div>
     </div>
