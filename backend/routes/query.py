@@ -48,16 +48,22 @@ async def query_knowledge_base(req: QueryRequest):
 
     t0 = time.perf_counter()
     if results:
-        files_to_read = list({r.file for r in results[:5]})
+        files_to_read = _select_files(results)
         search_text_parts = []
+        total_chars = 0
+        per_file_budget = MAX_CONTEXT_CHARS // min(len(files_to_read), 10)
         for f in files_to_read:
             content = read_file_content(f)
-            if len(content) <= MAX_CONTEXT_CHARS:
-                search_text_parts.append(f"=== 文件: {f} ===\n{content}\n")
+            if len(content) <= per_file_budget:
+                chunk = f"=== 文件: {f} ===\n{content}\n"
             else:
                 file_results = [r for r in results if r.file == f]
-                excerpts = _extract_relevant_sections(content, file_results)
-                search_text_parts.append(f"=== 文件: {f} (摘录) ===\n{excerpts}\n")
+                excerpts = _extract_relevant_sections(content, file_results, budget=per_file_budget)
+                chunk = f"=== 文件: {f} (摘录) ===\n{excerpts}\n"
+            if total_chars + len(chunk) > MAX_CONTEXT_CHARS:
+                break
+            search_text_parts.append(chunk)
+            total_chars += len(chunk)
         search_text = "\n".join(search_text_parts)
     else:
         search_text = "未找到相关内容。"
@@ -89,8 +95,16 @@ async def query_knowledge_base(req: QueryRequest):
     return QueryResponse(answer=answer, sources=sources, search_strategy=strategy, timing=timing)
 
 
-def _extract_relevant_sections(content: str, results: list, context_radius: int = 20) -> str:
+def _select_files(results: list, max_files: int = 20) -> list[str]:
+    """Select top files by hit count, ensuring broad coverage."""
+    from collections import Counter
+    file_hits = Counter(r.file for r in results)
+    return [f for f, _ in file_hits.most_common(max_files)]
+
+
+def _extract_relevant_sections(content: str, results: list, context_radius: int = 20, budget: int = None) -> str:
     """Extract sections around search hits, ensuring coverage across different document sections."""
+    max_chars = budget if budget else MAX_CONTEXT_CHARS
     lines = content.splitlines()
     total_lines = len(lines)
 
@@ -110,7 +124,7 @@ def _extract_relevant_sections(content: str, results: list, context_radius: int 
 
     parts = []
     total_chars = 0
-    budget_per_section = MAX_CONTEXT_CHARS // max(len(sections), 1)
+    budget_per_section = max_chars // max(len(sections), 1)
 
     for sec_start, sec_end, sec_hits in sections:
         sec_lines = lines[sec_start:sec_end]
@@ -139,8 +153,8 @@ def _extract_relevant_sections(content: str, results: list, context_radius: int 
                 sec_chars += len(snippet)
             chunk = f"[行 {sec_start+1}+ 摘录]:\n" + "\n...\n".join(sec_parts)
 
-        if total_chars + len(chunk) > MAX_CONTEXT_CHARS:
-            remaining = MAX_CONTEXT_CHARS - total_chars
+        if total_chars + len(chunk) > max_chars:
+            remaining = max_chars - total_chars
             if remaining > 200:
                 parts.append(chunk[:remaining] + "\n...(截断)")
             break
@@ -182,16 +196,22 @@ async def query_knowledge_base_stream(req: QueryRequest):
     t_search = time.perf_counter() - t0
 
     if results:
-        files_to_read = list({r.file for r in results[:5]})
+        files_to_read = _select_files(results)
         search_text_parts = []
+        total_chars = 0
+        per_file_budget = MAX_CONTEXT_CHARS // min(len(files_to_read), 10)
         for f in files_to_read:
             content = read_file_content(f)
-            if len(content) <= MAX_CONTEXT_CHARS:
-                search_text_parts.append(f"=== 文件: {f} ===\n{content}\n")
+            if len(content) <= per_file_budget:
+                chunk = f"=== 文件: {f} ===\n{content}\n"
             else:
                 file_results = [r for r in results if r.file == f]
-                excerpts = _extract_relevant_sections(content, file_results)
-                search_text_parts.append(f"=== 文件: {f} (摘录) ===\n{excerpts}\n")
+                excerpts = _extract_relevant_sections(content, file_results, budget=per_file_budget)
+                chunk = f"=== 文件: {f} (摘录) ===\n{excerpts}\n"
+            if total_chars + len(chunk) > MAX_CONTEXT_CHARS:
+                break
+            search_text_parts.append(chunk)
+            total_chars += len(chunk)
         search_text = "\n".join(search_text_parts)
     else:
         search_text = "未找到相关内容。"
