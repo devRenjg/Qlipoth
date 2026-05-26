@@ -3,18 +3,25 @@ import asyncio
 import json
 from pathlib import Path
 from urllib.parse import urlparse
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import aiosqlite
 from config import load_settings
-from parsers import parse_file, PARSERS
+from parsers import parse_file, PARSERS, extract_owners
 from database import DB_PATH
 from scraper import scrape_tencent_doc, scrape_tencent_doc_recursive, validate_tencent_doc_url
 
 router = APIRouter(tags=["upload"])
 ALLOWED_EXTENSIONS = set(PARSERS.keys())
 _executor = ThreadPoolExecutor(max_workers=2)
+_BJ_TZ = timezone(timedelta(hours=8))
+
+
+def _now_bj() -> str:
+    return datetime.now(_BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 @router.post("/upload")
@@ -22,6 +29,13 @@ async def upload_file(file: UploadFile = File(...)):
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"不支持的文件格式: {ext}，支持: {', '.join(ALLOWED_EXTENSIONS)}")
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id FROM documents WHERE original_name = ?", (file.filename,)
+        )
+        if await cursor.fetchone():
+            raise HTTPException(409, f"文件「{file.filename}」已导入过，无需重复导入")
 
     kb_dir = Path(load_settings().knowledge_base_dir)
     kb_dir.mkdir(parents=True, exist_ok=True)
@@ -31,6 +45,9 @@ async def upload_file(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, f)
 
         content = parse_file(str(temp_path))
+        owners = extract_owners(content)
+        if owners:
+            content = f"> 负责人: {', '.join('@' + o for o in owners)}\n\n{content}"
         stored_name = Path(file.filename).stem + ".md"
         stored_path = kb_dir / stored_name
 
@@ -45,10 +62,13 @@ async def upload_file(file: UploadFile = File(...)):
 
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
-                "INSERT INTO documents (original_name, stored_path, file_type, file_size) VALUES (?, ?, ?, ?)",
-                (file.filename, stored_name, ext, file_size),
+                "INSERT INTO documents (original_name, stored_path, file_type, file_size, uploaded_at) VALUES (?, ?, ?, ?, ?)",
+                (file.filename, stored_name, ext, file_size, _now_bj()),
             )
             await db.commit()
+
+        tree_entry = [{"title": file.filename, "stored_as": stored_name, "depth": 0, "url": "", "children": [], "parent": None, "error": None}]
+        await _save_import_tree(f"file://{file.filename}", file.filename, tree_entry)
 
     finally:
         if temp_path.exists():
@@ -59,8 +79,11 @@ async def upload_file(file: UploadFile = File(...)):
 
 class UrlImportRequest(BaseModel):
     url: str
-    recursive: bool = True
-    max_depth: int = 5
+    max_depth: int = 2
+
+    @property
+    def recursive(self) -> bool:
+        return self.max_depth > 0
 
 
 def _normalize_url(url: str) -> str:
@@ -100,15 +123,17 @@ def _run_scraper_recursive(url: str, max_depth: int) -> list[dict]:
 
 @router.post("/upload/url")
 async def upload_from_url(req: UrlImportRequest):
+    if req.max_depth < 0 or req.max_depth > 3:
+        raise HTTPException(400, "递归层数范围为 0-3（0 表示不递归）")
+
     if not validate_tencent_doc_url(req.url):
         raise HTTPException(400, "不支持的链接，仅支持腾讯文档/企业微信文档（docs.qq.com / doc.weixin.qq.com）")
-
-    if await _is_url_imported(req.url):
-        raise HTTPException(409, "该文档已导入过，无需重复导入")
 
     loop = asyncio.get_event_loop()
 
     if not req.recursive:
+        if await _is_url_imported(req.url):
+            raise HTTPException(409, "该文档已导入过，无需重复导入")
         try:
             title, content = await loop.run_in_executor(_executor, _run_scraper, req.url)
         except PermissionError as e:
@@ -204,10 +229,203 @@ async def upload_from_url(req: UrlImportRequest):
     }
 
 
+@router.post("/upload/url/stream")
+async def upload_from_url_stream(req: UrlImportRequest):
+    """SSE stream version of recursive URL import, pushing progress per document."""
+    if req.max_depth < 0 or req.max_depth > 3:
+        raise HTTPException(400, "递归层数范围为 0-3（0 表示不递归）")
+    if not validate_tencent_doc_url(req.url):
+        raise HTTPException(400, "不支持的链接，仅支持腾讯文档/企业微信文档（docs.qq.com / doc.weixin.qq.com）")
+
+    # max_depth=0 时不递归，父文档已导入则直接拒绝
+    if not req.recursive:
+        if await _is_url_imported(req.url):
+            raise HTTPException(409, "该文档已导入过，无需重复导入")
+        loop = asyncio.get_event_loop()
+        try:
+            title, content = await loop.run_in_executor(_executor, _run_scraper, req.url)
+        except PermissionError as e:
+            raise HTTPException(403, str(e))
+        except TimeoutError as e:
+            raise HTTPException(504, str(e))
+        except Exception as e:
+            raise HTTPException(500, f"抓取失败: {type(e).__name__}: {str(e)}")
+
+        stored_name = await _save_document(title, content, req.url, None)
+        doc_entry = {"title": title, "stored_as": stored_name, "depth": 0, "url": req.url, "children": [], "parent": None, "parent_url": None, "error": None}
+        await _save_import_tree(req.url, title, [doc_entry])
+
+        async def single_gen():
+            yield f"data: {json.dumps({'type': 'progress', 'data': {'status': 'success', 'title': title, 'depth': 0, 'url': req.url}}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'data': {'message': '导入成功', 'total': 1, 'success': 1, 'failed': 0, 'skipped': 0}}, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(single_gen(), media_type="text/event-stream")
+
+    # 递归模式：父文档已导入也继续，只跳过已导入的单个文档，子文档照常录入
+    progress_queue = asyncio.Queue()
+    main_loop = asyncio.get_event_loop()
+
+    def _run_recursive_with_progress():
+        """Run in a thread with its own event loop to avoid Windows ProactorEventLoop issues."""
+        loop = asyncio.new_event_loop()
+
+        async def _inner():
+            documents = []
+            failed = []
+            skipped = []
+            title_to_stored = {}
+
+            async def on_progress(result):
+                if result["error"]:
+                    failed.append(result)
+                    # 持久化失败记录
+                    async with aiosqlite.connect(DB_PATH) as db:
+                        await db.execute(
+                            "INSERT INTO failed_imports (url, title, error, parent_url, depth, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                            (result["url"], result.get("title", ""), result["error"], result.get("parent_url"), result.get("depth", 0), _now_bj()),
+                        )
+                        await db.commit()
+                    main_loop.call_soon_threadsafe(progress_queue.put_nowait, {
+                        "type": "progress",
+                        "data": {"status": "failed", "title": result.get("title") or result["url"], "depth": result["depth"], "url": result["url"], "error": result["error"]},
+                    })
+                    return
+
+                norm = _normalize_url(result["url"])
+                async with aiosqlite.connect(DB_PATH) as db:
+                    cursor = await db.execute("SELECT id FROM documents WHERE source_url = ?", (norm,))
+                    already = await cursor.fetchone()
+
+                if already:
+                    skipped.append(result)
+                    title_to_stored[result["url"]] = {"title": result["title"], "stored_as": "(已存在)"}
+                    main_loop.call_soon_threadsafe(progress_queue.put_nowait, {
+                        "type": "progress",
+                        "data": {"status": "skipped", "title": result["title"], "depth": result["depth"], "url": result["url"], "reason": "已导入"},
+                    })
+                    return
+
+                parent_title = None
+                parent_url = result.get("parent_url")
+                if parent_url:
+                    parent_title = title_to_stored.get(parent_url, {}).get("title")
+
+                child_urls = result.get("children", [])
+                content = _build_markdown_with_relations(
+                    result["title"], result["content"], result["url"],
+                    parent_title, []
+                )
+
+                kb_dir = Path(load_settings().knowledge_base_dir)
+                kb_dir.mkdir(parents=True, exist_ok=True)
+                stored_name = f"{result['title']}.md"
+                stored_path = kb_dir / stored_name
+                counter = 1
+                while stored_path.exists():
+                    stored_name = f"{result['title']}_{counter}.md"
+                    stored_path = kb_dir / stored_name
+                    counter += 1
+                stored_path.write_text(content, encoding="utf-8")
+                file_size = stored_path.stat().st_size
+
+                source_label = f"{result['title']} (腾讯文档)"
+                if parent_title:
+                    source_label += f" [子文档 of {parent_title}]"
+                norm_url = _normalize_url(result["url"])
+
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute(
+                        "INSERT INTO documents (original_name, stored_path, file_type, file_size, source_url, uploaded_at) VALUES (?, ?, ?, ?, ?, ?)",
+                        (source_label, stored_name, ".url", file_size, norm_url, _now_bj()),
+                    )
+                    await db.commit()
+
+                title_to_stored[result["url"]] = {"title": result["title"], "stored_as": stored_name}
+                documents.append({
+                    "title": result["title"], "stored_as": stored_name,
+                    "depth": result["depth"], "url": result["url"],
+                    "children": child_urls, "parent": parent_title,
+                    "parent_url": parent_url, "error": None,
+                })
+                main_loop.call_soon_threadsafe(progress_queue.put_nowait, {
+                    "type": "progress",
+                    "data": {"status": "success", "title": result["title"], "depth": result["depth"], "url": result["url"], "stored_as": stored_name},
+                })
+
+            try:
+                await scrape_tencent_doc_recursive(req.url, max_depth=req.max_depth, on_progress=on_progress)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                main_loop.call_soon_threadsafe(progress_queue.put_nowait, {"type": "error", "data": {"error": f"{type(e).__name__}: {str(e)}"}})
+                return
+
+            # 构建完整的树形记录
+            all_entries = []
+            for doc in documents:
+                all_entries.append({
+                    "title": doc["title"], "stored_as": doc["stored_as"],
+                    "depth": doc["depth"], "url": doc["url"],
+                    "children": doc["children"], "parent": doc["parent"],
+                    "parent_url": doc.get("parent_url"), "error": None,
+                })
+            for r in skipped:
+                all_entries.append({
+                    "title": r.get("title", ""), "stored_as": "(已存在)",
+                    "depth": r["depth"], "url": r["url"],
+                    "children": r.get("children", []), "parent": title_to_stored.get(r.get("parent_url"), {}).get("title"),
+                    "parent_url": r.get("parent_url"), "error": None,
+                })
+            for r in failed:
+                all_entries.append({
+                    "title": r.get("title", ""), "stored_as": None,
+                    "depth": r["depth"], "url": r["url"],
+                    "children": [], "parent": title_to_stored.get(r.get("parent_url"), {}).get("title"),
+                    "parent_url": r.get("parent_url"), "error": r["error"],
+                })
+
+            root_title = title_to_stored.get(req.url, {}).get("title") or "未知"
+            all_entries.sort(key=lambda x: x["depth"])
+            if all_entries:
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute(
+                        "INSERT INTO import_trees (root_url, root_title, tree_data, doc_count, imported_at) VALUES (?, ?, ?, ?, ?)",
+                        (req.url, root_title, json.dumps(all_entries, ensure_ascii=False), len(all_entries), _now_bj()),
+                    )
+                    await db.commit()
+
+            main_loop.call_soon_threadsafe(progress_queue.put_nowait, {
+                "type": "done",
+                "data": {"message": "导入完成", "total": len(all_entries), "success": len(documents), "failed": len(failed), "skipped": len(skipped)},
+            })
+
+        try:
+            loop.run_until_complete(_inner())
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            main_loop.call_soon_threadsafe(progress_queue.put_nowait, {"type": "error", "data": {"error": f"{type(e).__name__}: {str(e)}"}})
+        finally:
+            loop.close()
+
+    async def event_generator():
+        _executor.submit(_run_recursive_with_progress)
+        while True:
+            msg = await progress_queue.get()
+            yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            if msg["type"] in ("done", "error"):
+                break
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 def _build_markdown_with_relations(
     title: str, text: str, url: str, parent_title: str | None, child_titles: list[str]
 ) -> str:
+    owners = extract_owners(text)
     header = f"# {title}\n\n> 来源: {url}\n"
+    if owners:
+        header += f"> 负责人: {', '.join('@' + o for o in owners)}\n"
     if parent_title:
         header += f"> 父文档: {parent_title}\n"
     if child_titles:
@@ -239,8 +457,8 @@ async def _save_document(title: str, content: str, url: str, parent_title: str |
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO documents (original_name, stored_path, file_type, file_size, source_url) VALUES (?, ?, ?, ?, ?)",
-            (source_label, stored_name, ".url", file_size, norm_url),
+            "INSERT INTO documents (original_name, stored_path, file_type, file_size, source_url, uploaded_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (source_label, stored_name, ".url", file_size, norm_url, _now_bj()),
         )
         await db.commit()
 
@@ -250,8 +468,8 @@ async def _save_document(title: str, content: str, url: str, parent_title: str |
 async def _save_import_tree(root_url: str, root_title: str, tree_entries: list[dict]):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO import_trees (root_url, root_title, tree_data, doc_count) VALUES (?, ?, ?, ?)",
-            (root_url, root_title, json.dumps(tree_entries, ensure_ascii=False), len(tree_entries)),
+            "INSERT INTO import_trees (root_url, root_title, tree_data, doc_count, imported_at) VALUES (?, ?, ?, ?, ?)",
+            (root_url, root_title, json.dumps(tree_entries, ensure_ascii=False), len(tree_entries), _now_bj()),
         )
         await db.commit()
 
@@ -276,3 +494,54 @@ async def list_import_trees():
             }
             for row in rows
         ]
+
+
+@router.delete("/upload/trees/{tree_id}")
+async def delete_import_tree(tree_id: int):
+    """Delete an import tree record and its associated documents."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT tree_data FROM import_trees WHERE id = ?", (tree_id,))
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "导入记录不存在")
+
+        tree_entries = json.loads(row["tree_data"])
+        kb_dir = Path(load_settings().knowledge_base_dir)
+
+        deleted_files = 0
+        for entry in tree_entries:
+            stored_as = entry.get("stored_as")
+            if not stored_as or stored_as == "(已存在)":
+                continue
+            file_path = kb_dir / stored_as
+            if file_path.exists():
+                file_path.unlink()
+                deleted_files += 1
+            await db.execute("DELETE FROM documents WHERE stored_path = ?", (stored_as,))
+
+        await db.execute("DELETE FROM import_trees WHERE id = ?", (tree_id,))
+        await db.commit()
+
+    return {"message": f"已删除，清理了 {deleted_files} 个文件"}
+
+
+@router.get("/upload/failed")
+async def list_failed_imports():
+    """List all failed import records for future retry."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM failed_imports ORDER BY created_at DESC"
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+@router.delete("/upload/failed/{record_id}")
+async def delete_failed_import(record_id: int):
+    """Delete a failed import record."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM failed_imports WHERE id = ?", (record_id,))
+        await db.commit()
+    return {"message": "已删除"}

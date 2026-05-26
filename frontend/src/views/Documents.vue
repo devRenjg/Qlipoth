@@ -1,7 +1,7 @@
 <template>
   <div class="documents-view">
     <div class="header">
-      <h2>文档管理</h2>
+      <h2>文档管理 <span class="doc-count">共 {{ documents.length }} 篇</span></h2>
       <el-input v-model="filterText" placeholder="筛选文档..." style="width: 240px" clearable />
     </div>
 
@@ -77,5 +77,6 @@ function formatSize(bytes) {
 
 <style scoped>
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.doc-count { font-size: 14px; font-weight: normal; color: #909399; margin-left: 8px; }
 .doc-content { white-space: pre-wrap; word-break: break-word; max-height: 60vh; overflow-y: auto; font-size: 14px; line-height: 1.6; }
 </style>

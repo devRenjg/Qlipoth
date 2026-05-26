@@ -1,8 +1,13 @@
 import subprocess
 import os
+import json as json_mod
 from pathlib import Path
 from dataclasses import dataclass
 from config import load_settings
+
+RG_PATH = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Links", "rg.exe")
+if not os.path.exists(RG_PATH):
+    RG_PATH = "rg"
 
 
 @dataclass
@@ -12,6 +17,7 @@ class SearchResult:
     content: str
     context_before: list[str]
     context_after: list[str]
+    is_original_keyword: bool = False
 
 
 def _get_kb_dir() -> str:
@@ -19,10 +25,13 @@ def _get_kb_dir() -> str:
 
 
 def _expand_keywords(keywords: list[str]) -> list[str]:
-    """Expand compound keywords into shorter sub-terms for better grep matching.
+    """Expand compound keywords into shorter sub-terms for better matching.
 
-    LLM tends to generate compound terms like '直播值班' or '部门统计' that don't
-    appear as-is in documents. We keep the original and also add shorter segments.
+    Strategy:
+    - Keep original keyword
+    - For 4-char Chinese compounds: split into two 2-char words
+    - For 3+ char Chinese phrases: add variant without last char (e.g. 覆盖率→覆盖)
+    - For English/numbers: keep as-is, skip pure numbers under 3 chars
     """
     import re
     expanded = []
@@ -39,16 +48,76 @@ def _expand_keywords(keywords: list[str]) -> list[str]:
         for part in parts:
             if len(part) <= 1:
                 continue
-            if part[0] >= '一' and len(part) >= 2:
-                for i in range(len(part) - 1):
-                    bigram = part[i:i+2]
-                    if bigram not in seen:
-                        seen.add(bigram)
-                        expanded.append(bigram)
-            elif part not in seen:
-                seen.add(part)
-                expanded.append(part)
+            if part[0] >= '一':
+                if len(part) >= 3:
+                    variant = part[:-1]
+                    if variant not in seen:
+                        seen.add(variant)
+                        expanded.append(variant)
+                if len(part) == 4:
+                    half1 = part[:2]
+                    half2 = part[2:]
+                    if half1 not in seen:
+                        seen.add(half1)
+                        expanded.append(half1)
+                    if half2 not in seen:
+                        seen.add(half2)
+                        expanded.append(half2)
+            else:
+                if part.isdigit() and len(part) <= 2:
+                    continue
+                if part not in seen:
+                    seen.add(part)
+                    expanded.append(part)
     return expanded
+
+
+def _rg_search(keyword: str, kb_path: str, file_pattern: str = "*") -> list[SearchResult]:
+    """Run ripgrep for a single keyword, return structured results."""
+    cmd = [
+        RG_PATH,
+        "--json",
+        "--ignore-case",
+        "--max-count", "200",
+    ]
+    if file_pattern != "*":
+        cmd.extend(["--glob", file_pattern])
+
+    cmd.extend([keyword, kb_path])
+
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=10, encoding="utf-8"
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return _fallback_search(keyword, Path(kb_path), file_pattern, 0)
+
+    if proc.returncode not in (0, 1):
+        return _fallback_search(keyword, Path(kb_path), file_pattern, 0)
+
+    results = []
+    for line in proc.stdout.splitlines():
+        if not line:
+            continue
+        try:
+            msg = json_mod.loads(line)
+        except json_mod.JSONDecodeError:
+            continue
+        if msg.get("type") != "match":
+            continue
+        data = msg["data"]
+        file_path = data["path"]["text"]
+        rel_path = os.path.relpath(file_path, kb_path)
+        line_number = data["line_number"]
+        content = data["lines"]["text"].strip()
+        results.append(SearchResult(
+            file=rel_path,
+            line_number=line_number,
+            content=content,
+            context_before=[],
+            context_after=[],
+        ))
+    return results
 
 
 def grep_search(keywords: list[str], file_pattern: str = "*", context_lines: int = 3) -> list[SearchResult]:
@@ -59,23 +128,19 @@ def grep_search(keywords: list[str], file_pattern: str = "*", context_lines: int
         return results
 
     expanded = _expand_keywords(keywords)
+    priority_keywords = set()
+    for kw in keywords:
+        if len(kw) >= 3 and any('一' <= c <= '鿿' for c in kw):
+            priority_keywords.add(kw)
+            if len(kw) >= 4:
+                priority_keywords.add(kw[:-1])
 
     for keyword in expanded:
-        try:
-            cmd = [
-                "grep", "-rni",
-                f"--include={file_pattern}",
-                f"-C{context_lines}",
-                keyword,
-                str(kb_path),
-            ]
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=10, encoding="utf-8"
-            )
-            if proc.returncode == 0:
-                results.extend(_parse_grep_output(proc.stdout, kb_dir))
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            results.extend(_fallback_search(keyword, kb_path, file_pattern, context_lines))
+        parsed = _rg_search(keyword, str(kb_path), file_pattern)
+        is_priority = keyword in priority_keywords
+        for r in parsed:
+            r.is_original_keyword = is_priority
+        results.extend(parsed)
 
     seen = set()
     unique = []
@@ -85,48 +150,6 @@ def grep_search(keywords: list[str], file_pattern: str = "*", context_lines: int
             seen.add(key)
             unique.append(r)
     return unique
-
-
-def _parse_grep_output(output: str, kb_dir: str) -> list[SearchResult]:
-    results = []
-    blocks = output.strip().split("--\n")
-    for block in blocks:
-        lines = block.strip().split("\n")
-        for line in lines:
-            if not line:
-                continue
-            file_path, line_num, content = _split_grep_line(line)
-            if file_path is None:
-                continue
-            rel_path = os.path.relpath(file_path, kb_dir)
-            results.append(SearchResult(
-                file=rel_path,
-                line_number=line_num,
-                content=content.strip(),
-                context_before=[],
-                context_after=[],
-            ))
-    return results
-
-
-def _split_grep_line(line: str):
-    """Parse a grep output line, handling Windows drive letters (e.g. C:\\path:10:content)."""
-    # Skip the drive letter prefix if present (e.g. "C:")
-    offset = 0
-    if len(line) >= 2 and line[1] == ':' and line[0].isalpha():
-        offset = 2
-
-    # Find file_path:line_number:content after the drive prefix
-    rest = line[offset:]
-    parts = rest.split(":", 2)
-    if len(parts) < 3:
-        return None, None, None
-    file_path = line[:offset] + parts[0]
-    try:
-        line_num = int(parts[1])
-    except ValueError:
-        return None, None, None
-    return file_path, line_num, parts[2]
 
 
 def _fallback_search(keyword: str, kb_path: Path, file_pattern: str, context_lines: int) -> list[SearchResult]:
@@ -144,14 +167,12 @@ def _fallback_search(keyword: str, kb_path: Path, file_pattern: str, context_lin
         keyword_lower = keyword.lower()
         for i, line in enumerate(lines):
             if keyword_lower in line.lower():
-                start = max(0, i - context_lines)
-                end = min(len(lines), i + context_lines + 1)
                 results.append(SearchResult(
                     file=str(file_path.relative_to(kb_path)),
                     line_number=i + 1,
                     content=line.strip(),
-                    context_before=[l.strip() for l in lines[start:i]],
-                    context_after=[l.strip() for l in lines[i + 1:end]],
+                    context_before=[],
+                    context_after=[],
                 ))
     return results
 

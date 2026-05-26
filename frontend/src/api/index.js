@@ -74,3 +74,32 @@ export function getSettings() {
 export function updateSettings(data) {
   return api.put('/settings', data)
 }
+
+export function getCurrentUser() {
+  return api.get('/user/me')
+}
+
+export function registerUser(username, password) {
+  return api.post('/user/register', { username, password })
+}
+
+export function loginUser(username, password) {
+  return api.post('/user/login', { username, password })
+}
+
+export function logoutUser() {
+  return api.post('/user/logout')
+}
+
+export function getChatHistory(userId) {
+  const params = userId ? { user_id: userId } : {}
+  return api.get('/chat/history', { params })
+}
+
+export function saveChatHistory(question, answer, sourceUrls, userId) {
+  return api.post('/chat/history', { question, answer, source_urls: sourceUrls, user_id: userId })
+}
+
+export function deleteChatHistory(id) {
+  return api.delete(`/chat/history/${id}`)
+}

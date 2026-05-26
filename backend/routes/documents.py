@@ -18,6 +18,37 @@ async def list_documents():
         return [dict(row) for row in rows]
 
 
+@router.get("/documents/view/{file_name:path}")
+async def view_document_by_file(file_name: str):
+    """View document content rendered as HTML with markdown styling."""
+    from fastapi.responses import HTMLResponse
+    content = read_file_content(file_name)
+    if not content:
+        raise HTTPException(404, "文档不存在")
+    title = file_name.replace(".md", "")
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-light.min.css">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+body {{ max-width: 900px; margin: 40px auto; padding: 0 20px; background: #fff; }}
+.markdown-body {{ font-size: 15px; line-height: 1.7; }}
+</style>
+</head>
+<body>
+<article class="markdown-body" id="content"></article>
+<script>
+const raw = {repr(content)};
+document.getElementById('content').innerHTML = marked.parse(raw);
+</script>
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+
 @router.get("/documents/{doc_id}")
 async def get_document(doc_id: int):
     async with aiosqlite.connect(DB_PATH) as db:

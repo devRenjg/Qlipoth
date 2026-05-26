@@ -4,10 +4,20 @@ from pydantic import BaseModel
 from searcher import grep_search, read_file_content
 from llm import generate_search_strategy, generate_answer, stream_answer
 from config import load_settings
+from database import DB_PATH
+from datetime import datetime, timezone, timedelta
+import aiosqlite
+import re
 import time
 import json
 
 router = APIRouter(tags=["query"])
+
+_BJ_TZ = timezone(timedelta(hours=8))
+
+
+def _now_bj() -> str:
+    return datetime.now(_BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class QueryRequest(BaseModel):
@@ -17,6 +27,7 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     sources: list[dict]
+    source_urls: list[dict] = []
     search_strategy: dict
     timing: dict
 
@@ -79,6 +90,7 @@ async def query_knowledge_base(req: QueryRequest):
     t_total = time.perf_counter() - t_start
 
     sources = [{"file": r.file, "line": r.line_number, "content": r.content} for r in results[:10]]
+    source_urls = _extract_source_urls(files_to_read if results else [])
 
     timing = {
         "total": round(t_total, 2),
@@ -92,18 +104,58 @@ async def query_knowledge_base(req: QueryRequest):
         "context_chars": len(search_text),
     }
 
-    return QueryResponse(answer=answer, sources=sources, search_strategy=strategy, timing=timing)
+    return QueryResponse(answer=answer, sources=sources, source_urls=source_urls, search_strategy=strategy, timing=timing)
 
 
-def _select_files(results: list, max_files: int = 20) -> list[str]:
-    """Select top files by hit count, ensuring broad coverage."""
+def _extract_source_urls(files: list[str]) -> list[dict]:
+    """Extract source references from files. Returns top 5 most relevant.
+    For URL-imported docs: returns online link. For file uploads: returns local file reference."""
+    source_urls = []
+    seen = set()
+    for f in files:
+        if f in seen:
+            continue
+        seen.add(f)
+        content = read_file_content(f)
+        title = f.replace(".md", "")
+        url = None
+        for line in content.split("\n")[:10]:
+            m = re.match(r'>\s*来源:\s*(https?://[^\s]+)', line)
+            if m:
+                url = m.group(1)
+                cut = re.search(r'[一-鿿$\[\]()（）]', url)
+                if cut:
+                    url = url[:cut.start()]
+                url = url.rstrip("&?#")
+                if "weixin.qq.com" not in url and "docs.qq.com" not in url:
+                    url = None
+                break
+        source_urls.append({"title": title, "url": url, "file": f})
+        if len(source_urls) >= 5:
+            break
+    return source_urls
+
+
+def _select_files(results: list, max_files: int = 10) -> list[str]:
+    """Select top files. Files with priority keyword matches are guaranteed inclusion."""
     from collections import Counter
     file_hits = Counter(r.file for r in results)
-    return [f for f, _ in file_hits.most_common(max_files)]
+    file_priority = Counter(r.file for r in results if getattr(r, 'is_original_keyword', False))
+
+    # Guarantee files with priority hits get included (up to half the slots)
+    priority_files = [f for f, _ in file_priority.most_common(max_files // 2)]
+
+    # Fill remaining slots by total hit count
+    scored = [(f, c) for f, c in file_hits.most_common() if f not in priority_files]
+    remaining = max_files - len(priority_files)
+    other_files = [f for f, _ in scored[:remaining]]
+
+    return priority_files + other_files
 
 
 def _extract_relevant_sections(content: str, results: list, context_radius: int = 20, budget: int = None) -> str:
-    """Extract sections around search hits, ensuring coverage across different document sections."""
+    """Extract sections around search hits, ensuring coverage across different document sections.
+    Prioritizes summary/statistics sections."""
     max_chars = budget if budget else MAX_CONTEXT_CHARS
     lines = content.splitlines()
     total_lines = len(lines)
@@ -114,19 +166,48 @@ def _extract_relevant_sections(content: str, results: list, context_radius: int 
             section_starts.append(i)
     section_starts.append(total_lines)
 
+    # Identify all sections with hits
     sections = []
     for idx in range(len(section_starts) - 1):
         sec_start = section_starts[idx]
         sec_end = section_starts[idx + 1]
         sec_hits = [r for r in results if sec_start < r.line_number <= sec_end]
         if sec_hits:
-            sections.append((sec_start, sec_end, sec_hits))
+            sec_title = lines[sec_start] if sec_start < total_lines else ""
+            is_summary = any(kw in sec_title for kw in ("统计", "总计", "汇总", "合计", "概览", "总结"))
+            sections.append((sec_start, sec_end, sec_hits, is_summary))
+
+    # Also include summary sections even without direct hits
+    for idx in range(len(section_starts) - 1):
+        sec_start = section_starts[idx]
+        sec_end = section_starts[idx + 1]
+        sec_title = lines[sec_start] if sec_start < total_lines else ""
+        if any(kw in sec_title for kw in ("统计", "总计", "汇总", "合计", "概览", "总结")):
+            already = any(s[0] == sec_start for s in sections)
+            if not already:
+                sections.append((sec_start, sec_end, [], True))
+
+    # Sort: summary sections first, then by hit count
+    sections.sort(key=lambda x: (not x[3], -len(x[2])))
 
     parts = []
     total_chars = 0
-    budget_per_section = max_chars // max(len(sections), 1)
 
-    for sec_start, sec_end, sec_hits in sections:
+    # Give summary sections 50% of budget, rest share the other 50%
+    summary_count = sum(1 for s in sections if s[3])
+    non_summary_count = len(sections) - summary_count
+    if summary_count > 0 and non_summary_count > 0:
+        summary_budget = (max_chars // 2) // summary_count
+        normal_budget = (max_chars // 2) // non_summary_count
+    elif summary_count > 0:
+        summary_budget = max_chars // summary_count
+        normal_budget = 0
+    else:
+        summary_budget = 0
+        normal_budget = max_chars // max(non_summary_count, 1)
+
+    for sec_start, sec_end, sec_hits, is_summary in sections:
+        budget_per_section = summary_budget if is_summary else normal_budget
         sec_lines = lines[sec_start:sec_end]
         sec_content = "\n".join(sec_lines)
 
@@ -148,6 +229,10 @@ def _extract_relevant_sections(content: str, results: list, context_radius: int 
             for s, e in ranges:
                 snippet = "\n".join(sec_lines[s:e])
                 if sec_chars + len(snippet) > budget_per_section:
+                    remaining = budget_per_section - sec_chars
+                    if remaining > 100:
+                        sec_parts.append(snippet[:remaining] + "\n...(截断)")
+                        sec_chars += remaining
                     break
                 sec_parts.append(snippet)
                 sec_chars += len(snippet)
@@ -217,11 +302,13 @@ async def query_knowledge_base_stream(req: QueryRequest):
         search_text = "未找到相关内容。"
 
     sources = [{"file": r.file, "line": r.line_number, "content": r.content} for r in results[:10]]
+    source_urls = _extract_source_urls(files_to_read if results else [])
     t_prep = time.perf_counter() - t_start
 
     async def event_generator():
         meta = {
             "sources": sources,
+            "source_urls": source_urls,
             "search_strategy": strategy,
             "timing_prep": round(t_prep, 2),
             "timing_strategy": round(strategy_llm_time, 2),
@@ -252,3 +339,59 @@ async def query_knowledge_base_stream(req: QueryRequest):
         yield f"data: {json.dumps({'type': 'done', 'data': timing}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+class SaveHistoryRequest(BaseModel):
+    question: str
+    answer: str
+    source_urls: list[dict] = []
+    user_id: int | None = None
+
+
+@router.post("/chat/history")
+async def save_chat_history(req: SaveHistoryRequest):
+    """Save a Q&A pair to chat history."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO chat_history (user_id, question, answer, source_urls, created_at) VALUES (?, ?, ?, ?, ?)",
+            (req.user_id, req.question, req.answer, json.dumps(req.source_urls, ensure_ascii=False), _now_bj()),
+        )
+        await db.commit()
+    return {"message": "saved"}
+
+
+@router.get("/chat/history")
+async def get_chat_history(user_id: int | None = None, limit: int = 50):
+    """Get chat history, optionally filtered by user."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if user_id:
+            cursor = await db.execute(
+                "SELECT h.*, u.username as user_name FROM chat_history h LEFT JOIN users u ON h.user_id = u.id WHERE h.user_id = ? ORDER BY h.created_at DESC LIMIT ?",
+                (user_id, limit),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT h.*, u.username as user_name FROM chat_history h LEFT JOIN users u ON h.user_id = u.id ORDER BY h.created_at DESC LIMIT ?",
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "question": row["question"],
+                "answer": row["answer"],
+                "source_urls": json.loads(row["source_urls"]) if row["source_urls"] else [],
+                "created_at": row["created_at"],
+                "user_name": row["user_name"] or "匿名",
+            }
+            for row in rows
+        ]
+
+
+@router.delete("/chat/history/{history_id}")
+async def delete_chat_history(history_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM chat_history WHERE id = ?", (history_id,))
+        await db.commit()
+    return {"message": "deleted"}
