@@ -1,78 +1,109 @@
 <template>
-  <div class="chat-view">
-    <div class="chat-messages" ref="messagesRef">
-      <div v-if="messages.length === 0" class="empty-state">
-        <div class="shield-icon">&#9670;</div>
-        <h2>直播大型活动保障！有问必答！使命必达！</h2>
-        <p class="subtitle">克里珀持续以光年级屏障隔绝威胁，维系现存世界的完整。</p>
-        <div class="center-input">
-          <div class="input-wrapper">
-            <el-input
-              v-model="input"
-              placeholder="输入你的问题..."
-              @keyup.enter="sendMessage"
-              :disabled="loading"
-              size="large"
-            >
-              <template #append>
-                <el-button @click="sendMessage" :loading="loading" type="primary">发送</el-button>
-              </template>
-            </el-input>
-          </div>
-        </div>
-        <div class="preset-questions">
-          <span class="preset-label">快速查询：</span>
-          <el-tag
-            v-for="q in presetQuestions"
-            :key="q"
-            class="preset-tag"
-            @click="askPreset(q)"
-            effect="plain"
-          >{{ q }}</el-tag>
-        </div>
+  <div class="chat-wrapper">
+    <div class="history-sidebar">
+      <div class="sidebar-header">
+        <span>问答历史</span>
+        <el-button size="small" type="primary" text @click="newChat">新对话</el-button>
       </div>
-      <div v-for="(msg, i) in messages" :key="i" :class="['message', msg.role]">
-        <div class="message-content">
-          <div class="message-text" v-html="msg.html || msg.text"></div>
-          <div v-if="msg.timing" class="message-timing">
-            思考耗时 {{ msg.timing.total }}s（分析 {{ msg.timing.strategy }}s + 检索 {{ msg.timing.search }}s + 组织 {{ msg.timing.answer }}s）
-          </div>
+      <div class="sidebar-list">
+        <div
+          v-for="item in history"
+          :key="item.id"
+          class="history-item"
+          :class="{ active: activeHistoryId === item.id }"
+          @click="loadHistoryItem(item)"
+        >
+          <div class="history-question">{{ item.question }}</div>
+          <div class="history-meta"><span class="history-time">{{ item.created_at }}</span> <span class="history-user">{{ item.user_name }}</span></div>
         </div>
-      </div>
-      <div v-if="loading && messages[messages.length-1]?.text === ''" class="message assistant">
-        <div class="message-content">
-          <el-icon class="loading-icon"><Loading /></el-icon> 正在整理思路...
-        </div>
+        <div v-if="!history.length" class="sidebar-empty">暂无记录</div>
       </div>
     </div>
-    <div v-if="messages.length > 0" class="chat-input">
-      <div class="input-wrapper">
-        <el-input
-          v-model="input"
-          placeholder="输入你的问题..."
-          @keyup.enter="sendMessage"
-          :disabled="loading"
-          size="large"
-        >
-          <template #append>
-            <el-button @click="sendMessage" :loading="loading" type="primary">发送</el-button>
-          </template>
-        </el-input>
+    <div class="chat-view">
+      <div class="chat-messages" ref="messagesRef">
+        <div v-if="messages.length === 0" class="empty-state">
+          <div class="shield-icon">&#9670;</div>
+          <h2>直播大型活动保障！有问必答！使命必达！</h2>
+          <p class="subtitle">克里珀持续以光年级屏障隔绝威胁，维系现存世界的完整。</p>
+          <div class="center-input">
+            <div class="input-wrapper">
+              <el-input
+                v-model="input"
+                placeholder="输入你的问题..."
+                @keyup.enter="sendMessage"
+                :disabled="loading"
+                size="large"
+              >
+                <template #append>
+                  <el-button @click="sendMessage" :loading="loading" type="primary">发送</el-button>
+                </template>
+              </el-input>
+            </div>
+          </div>
+          <div class="preset-questions">
+            <span class="preset-label">快速问答：</span>
+            <el-tag
+              v-for="q in presetQuestions"
+              :key="q"
+              class="preset-tag"
+              @click="askPreset(q)"
+              effect="plain"
+            >{{ q }}</el-tag>
+          </div>
+        </div>
+        <div v-for="(msg, i) in messages" :key="i" :class="['message', msg.role]">
+          <div class="message-content">
+            <div class="message-text" v-html="msg.html || msg.text"></div>
+            <div v-if="msg.sourceUrls && msg.sourceUrls.length" class="message-refs">
+              <div class="refs-label">引用文档：</div>
+              <div v-for="(s, idx) in msg.sourceUrls" :key="idx" class="ref-item">
+                <a v-if="s.url" :href="s.url" target="_blank" class="ref-link">{{ s.title }}</a>
+                <a v-else href="#" class="ref-link ref-local" @click.prevent="viewLocalDoc(s.file)">{{ s.title }}</a>
+              </div>
+            </div>
+            <div v-if="msg.timing" class="message-timing">
+              思考耗时 {{ msg.timing.total }}s（分析 {{ msg.timing.strategy }}s + 检索 {{ msg.timing.search }}s + 组织 {{ msg.timing.answer }}s）
+            </div>
+          </div>
+        </div>
+        <div v-if="loading && messages[messages.length-1]?.text === ''" class="message assistant">
+          <div class="message-content">
+            <el-icon class="loading-icon"><Loading /></el-icon> 正在整理思路...
+          </div>
+        </div>
+      </div>
+      <div v-if="messages.length > 0" class="chat-input">
+        <div class="input-wrapper">
+          <el-input
+            v-model="input"
+            placeholder="输入你的问题..."
+            @keyup.enter="sendMessage"
+            :disabled="loading"
+            size="large"
+          >
+            <template #append>
+              <el-button @click="sendMessage" :loading="loading" type="primary">发送</el-button>
+            </template>
+          </el-input>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue'
+import { ref, inject, nextTick, onMounted } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
-import { queryKnowledgeBaseStream } from '../api/index.js'
+import { queryKnowledgeBaseStream, getChatHistory, saveChatHistory } from '../api/index.js'
 import { addProfilingRecord } from '../store/profiling.js'
 
+const currentUser = inject('currentUser')
 const messages = ref([])
 const input = ref('')
 const loading = ref(false)
 const messagesRef = ref(null)
+const history = ref([])
+const activeHistoryId = ref(null)
 
 const presetQuestions = [
   '示例活动值班多少人？',
@@ -80,9 +111,39 @@ const presetQuestions = [
   '26 年 CNY 版本覆盖率多少？',
 ]
 
+onMounted(() => { loadHistory() })
+
+async function loadHistory() {
+  try {
+    const role = currentUser?.value?.role
+    const userId = (role === 'admin' || role === 'super') ? null : currentUser?.value?.id
+    const { data } = await getChatHistory(userId)
+    history.value = data
+  } catch {}
+}
+
+function loadHistoryItem(item) {
+  activeHistoryId.value = item.id
+  messages.value = [
+    { role: 'user', text: item.question },
+    { role: 'assistant', text: item.answer, html: formatMarkdown(item.answer), sourceUrls: item.source_urls || [], timing: null },
+  ]
+}
+
+function newChat() {
+  messages.value = []
+  activeHistoryId.value = null
+  input.value = ''
+}
+
 function askPreset(q) {
   input.value = q
   sendMessage()
+}
+
+function viewLocalDoc(file) {
+  const url = `/api/documents/view/${encodeURIComponent(file)}`
+  window.open(url, '_blank')
 }
 
 async function sendMessage() {
@@ -100,12 +161,17 @@ async function sendMessage() {
     text: '',
     html: '',
     sources: [],
+    sourceUrls: [],
     timing: null,
   })
+
+  let finalSourceUrls = []
 
   queryKnowledgeBaseStream(question, {
     onMeta(meta) {
       messages.value[msgIdx].sources = meta.sources
+      messages.value[msgIdx].sourceUrls = meta.source_urls || []
+      finalSourceUrls = meta.source_urls || []
     },
     onChunk(chunk) {
       messages.value[msgIdx].text += chunk
@@ -117,6 +183,10 @@ async function sendMessage() {
       addProfilingRecord(question, timing)
       loading.value = false
       scrollToBottom()
+      // Save to history
+      const answer = messages.value[msgIdx].text
+      const userId = currentUser?.value?.id || null
+      saveChatHistory(question, answer, finalSourceUrls, userId).then(() => loadHistory()).catch(() => {})
     },
     onError(err) {
       messages.value[msgIdx].text = err || '请求失败，请检查后端服务和 LLM 配置'
@@ -142,7 +212,46 @@ async function scrollToBottom() {
 </script>
 
 <style scoped>
-.chat-view { display: flex; flex-direction: column; height: calc(100vh - 100px); font-size: 15px; }
+.chat-wrapper { display: flex; height: calc(100vh - 100px); gap: 0; }
+.history-sidebar {
+  width: 260px;
+  border-right: 1px solid #e8e8e8;
+  display: flex;
+  flex-direction: column;
+  background: #f9fafb;
+  flex-shrink: 0;
+}
+.sidebar-header {
+  padding: 14px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+  border-bottom: 1px solid #e8e8e8;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.sidebar-list { flex: 1; overflow-y: auto; padding: 8px 0; }
+.history-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f0f0;
+  transition: background 0.15s;
+}
+.history-item:hover { background: #eef1f6; }
+.history-item.active { background: #e6f0ff; border-left: 3px solid #4d6bfe; }
+.history-question {
+  font-size: 13px;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-meta { display: flex; gap: 8px; margin-top: 4px; font-size: 11px; }
+.history-user { color: #4d6bfe; }
+.history-time { color: #999; }
+.sidebar-empty { padding: 20px 16px; color: #999; font-size: 13px; text-align: center; }
+.chat-view { flex: 1; display: flex; flex-direction: column; font-size: 15px; min-width: 0; }
 .chat-messages { flex: 1; overflow-y: auto; padding: 20px 0; display: flex; flex-direction: column; justify-content: flex-start; padding-top: 12vh; }
 .empty-state { text-align: center; color: #666666; }
 .shield-icon {
@@ -212,6 +321,12 @@ async function scrollToBottom() {
 .message-sources { margin-top: 8px; font-size: 13px; }
 .source-item { padding: 4px 0; border-bottom: 1px solid #e8e8e8; color: #666666; }
 .source-item code { color: #4d6bfe; margin-right: 8px; }
+.message-refs { margin-top: 10px; font-size: 13px; color: #909399; }
+.refs-label { margin-bottom: 4px; }
+.ref-item { padding: 2px 0; }
+.ref-link { color: #409eff; text-decoration: none; }
+.ref-link:hover { text-decoration: underline; }
+.ref-local { color: #67c23a; }
 .message-timing { margin-top: 6px; font-size: 12px; color: #888888; }
 .chat-input {
   padding: 16px 0;

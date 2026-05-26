@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 from routes import upload, query, documents
+from auth import router as auth_router
 
 app = FastAPI(title="克里珀 - 大型活动保障知识库", version="1.0.0")
 
@@ -16,6 +17,7 @@ app.add_middleware(
 app.include_router(upload.router, prefix="/api")
 app.include_router(query.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
+app.include_router(auth_router, prefix="/api")
 
 
 @app.on_event("startup")

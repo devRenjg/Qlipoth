@@ -7,6 +7,7 @@ const routes = [
   { path: '/documents', component: () => import('./views/Documents.vue') },
   { path: '/profiling', component: () => import('./views/Profiling.vue') },
   { path: '/settings', component: () => import('./views/Settings.vue') },
+  { path: '/users', component: () => import('./views/Users.vue') },
 ]
 
 export default createRouter({

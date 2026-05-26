@@ -1,7 +1,7 @@
 # 克里珀 - 大型活动保障知识库技术方案文档
 
-> 当前版本：20260522.1  
-> 最后更新：2026-05-22
+> 当前版本：20260526.1  
+> 最后更新：2026-05-26
 
 ---
 
@@ -13,12 +13,13 @@
 | 20260519.2 | 2026-05-19 | 流式输出、多模型兼容、性能分析、搜索优化、UI 重构 | Claude + User |
 | 20260520.1 | 2026-05-20 | 人设体系、TAPD 集成、多文件覆盖优化、P0 自测用例 | Claude + User |
 | 20260522.1 | 2026-05-22 | 企业微信文档链接导入、Playwright 抓取、递归嵌套导入、Sheet 支持、去重机制 | Claude + User |
+| 20260526.1 | 2026-05-26 | 用户体系、权限分层、ripgrep 搜索引擎、PDF/OCR 支持、聊天历史、UI 重构 | Claude + User |
 
 ---
 
 ## 1. 项目概述
 
-克里珀（Qlipoth）是一个基于 Agentic Search 理念的大型活动保障知识库系统。区别于传统 RAG（检索增强生成）方案，采用类似 Claude Code / Codex 的工作方式：文件以纯文本形式存储在磁盘上，查询时通过 LLM 理解用户意图、生成搜索策略，再通过 grep + 文件读取实时搜索知识库内容，最后由 LLM 整合搜索结果生成自然语言回答。
+克里珀（Qlipoth）是一个基于 Agentic Search 理念的大型活动保障知识库系统。区别于传统 RAG（检索增强生成）方案，采用类似 Claude Code / Codex 的工作方式：文件以纯文本形式存储在磁盘上，查询时通过 LLM 理解用户意图、生成搜索策略，再通过 ripgrep 实时搜索知识库内容，最后由 LLM 整合搜索结果生成自然语言回答。
 
 ### 核心理念
 
@@ -28,6 +29,7 @@
 - **多模型兼容**：支持 DeepSeek、通义千问、智谱、Moonshot、OpenAI、Anthropic 等主流模型
 - **零向量数据库依赖**：不需要 embedding 模型、向量数据库等额外基础设施
 - **在线文档直接导入**：支持企业微信文档/腾讯文档链接导入，Playwright 无头浏览器自动抓取
+- **权限隔离**：三级角色体系（管理员/超级用户/普通用户），不同角色不同功能权限
 
 ---
 
@@ -38,34 +40,52 @@
 | 层级 | 技术选型 |
 |------|----------|
 | 前端 | Vue 3 + Vite + Element Plus + Vue Router |
-| 后端 | Python FastAPI + Uvicorn |
-| 存储 | 本地文件系统（Markdown）+ SQLite（元数据 + 导入树） |
-| 搜索 | grep（subprocess）+ Python fallback + 中文 bigram 分词 |
+| 后端 | Python 3.12 + FastAPI + Uvicorn |
+| 存储 | 本地文件系统（Markdown）+ SQLite（元数据/用户/历史） |
+| 搜索 | ripgrep（JSON 模式）+ 关键词扩展 + priority 权重 + Python fallback |
 | LLM | OpenAI Chat Completions API / Anthropic Messages API（双格式兼容） |
-| 文档解析 | python-docx / python-calamine / python-pptx |
+| 文档解析 | python-docx / python-calamine / python-pptx / pypdf + Tesseract OCR |
 | 在线文档抓取 | Playwright（Chromium）+ 网络拦截 + protobuf 解码 |
 | 流式传输 | Server-Sent Events (SSE) |
+| 认证 | Cookie Token + PBKDF2 密码哈希 + 角色权限 |
 
 ### 2.2 系统架构
 
 ```
+用户登录（用户名+密码）
+  → Cookie Token 自动登录（7天有效）
+  → 角色权限校验
+
 用户提问
-  → Step 1: LLM 理解意图，生成搜索策略（关键词列表、文件过滤条件）
-  → Step 2: 关键词 bigram 扩展 + grep 搜索 + 按 section 智能摘录
-  → Step 3: LLM 基于搜索结果流式生成自然语言回答（SSE）
-  → 实时返回回答 + 引用来源（文件名、行号）+ 耗时分析
+  → Step 1: LLM 理解意图，生成搜索策略（精确关键词 + 文件过滤）
+  → Step 2: 关键词扩展 + ripgrep JSON 搜索 + priority 文件选择 + 统计 section 优先摘录
+  → Step 3: LLM 基于搜索结果流式生成回答（全局视角，先总体后明细）
+  → 返回回答 + 引用文档链接（最多5个）+ 耗时分析
+  → 自动保存到聊天历史
 ```
 
-### 2.3 数据流
+### 2.3 搜索引擎架构
 
-**上传流程：**
-用户上传文件 → 后端解析转为 Markdown → 存储到 knowledge_base/ 目录 → SQLite 记录元数据
+```
+用户问题 → LLM 生成 keywords[]
+  → 关键词扩展（去尾变体 + 4字拆分，过滤短数字）
+  → ripgrep --json 逐词搜索（max-count=200/文件）
+  → 标记 priority（3+字中文原词命中）
+  → 文件选择：priority 文件保证入选 + 其余按命中数排序（共10个）
+  → 上下文摘录：统计/总计 section 50% 预算优先 + 超预算截取不跳过
+  → 60K 字符上下文 → LLM 回答
+```
+
+### 2.4 数据流
+
+**文件上传流程：**
+用户上传文件 → 解析（docx/xlsx/pptx/pdf/md/txt）→ 提取 @人名 → 存储 Markdown → 记录元数据 + 导入历史
 
 **链接导入流程：**
-用户输入 URL → Playwright 打开页面 → 拦截 opendoc/sheet API 响应 → protobuf 解码提取文本 → 递归发现子文档 → 逐个抓取 → 存储 + 记录层级关系
+用户输入 URL → Playwright 抓取 → protobuf 解码 → 保留链接/图片 → 递归子文档（最多3层）→ SSE 实时推送进度 → 失败记录持久化
 
 **查询流程：**
-用户提问 → LLM 生成搜索策略 → grep 搜索知识库 → LLM 生成回答 → 返回结果 + 来源
+用户提问 → LLM 搜索策略 → ripgrep 搜索 → 文件选择 + 摘录 → LLM 回答 → 引用文档 → 保存历史
 
 ---
 
@@ -74,44 +94,41 @@
 ```
 C:/Code/Qlipoth/
 ├── backend/
-│   ├── main.py                 # FastAPI 入口，CORS，路由注册，reload_dirs 配置
-│   ├── config.py               # 配置管理（LLM API、路径、api_format 等）
-│   ├── config.json             # 运行时配置文件（自动生成）
-│   ├── database.py             # SQLite 数据库初始化（documents + import_trees 表）
-│   ├── parsers.py              # 文档解析器（docx/xlsx/pptx/md/txt → Markdown，宽表拆分）
-│   ├── searcher.py             # 搜索引擎（grep + bigram 扩展 + Windows 路径兼容 + fallback）
-│   ├── scraper.py              # 在线文档抓取（Playwright + 网络拦截 + protobuf 解码 + 递归）
-│   ├── llm.py                  # LLM 调用（OpenAI/Anthropic 双格式 + 流式输出 + 人设注入）
-│   ├── Soul.md                 # 人设定义文件（研发负责人角色）
+│   ├── main.py                 # FastAPI 入口，CORS，路由注册
+│   ├── auth.py                 # 用户认证（注册/登录/角色/Token）
+│   ├── config.py               # 配置管理
+│   ├── config.json             # 运行时配置文件
+│   ├── database.py             # SQLite 初始化（documents/import_trees/users/chat_history/failed_imports）
+│   ├── parsers.py              # 文档解析器（docx/xlsx/pptx/pdf+OCR/md/txt）
+│   ├── searcher.py             # 搜索引擎（ripgrep JSON + priority + fallback）
+│   ├── scraper.py              # 在线文档抓取（Playwright + protobuf + 递归 + 链接保留）
+│   ├── llm.py                  # LLM 调用（双格式 + 流式 + 人设注入）
+│   ├── Soul.md                 # 人设定义（活动保障知识库助手）
 │   ├── requirements.txt        # Python 依赖
-│   ├── metadata.db             # SQLite 数据库文件（自动生成）
-│   ├── .browser_data/          # Playwright 浏览器持久化数据（登录态）
-│   ├── knowledge_base/         # 转换后的文本文件存储目录
+│   ├── metadata.db             # SQLite 数据库
+│   ├── .browser_data/          # Playwright 浏览器持久化数据
+│   ├── knowledge_base/         # 知识库文档存储
 │   └── routes/
-│       ├── __init__.py
-│       ├── upload.py           # 文件上传 + 链接导入（递归 + 去重 + 树结构保存）
-│       ├── query.py            # 查询接口（同步 + SSE 流式）+ 性能计时 + section 智能摘录
-│       └── documents.py        # 文档管理 + 设置接口（含 api_format）
+│       ├── upload.py           # 文件上传 + 链接导入（SSE 流式）+ 失败记录 + 重试
+│       ├── query.py            # 查询接口（SSE 流式）+ 聊天历史 CRUD
+│       └── documents.py        # 文档管理 + Markdown 渲染查看 + 设置
 ├── frontend/
+│   ├── src/
+│   │   ├── App.vue             # 根组件（登录/注册 + 角色导航 + 用户信息）
+│   │   ├── router.js           # 路由配置
+│   │   ├── api/index.js        # API 封装（REST + SSE + 认证）
+│   │   ├── store/profiling.js  # 性能分析 store
+│   │   └── views/
+│   │       ├── Chat.vue        # 智能问答（左侧历史栏 + 主聊天区）
+│   │       ├── Upload.vue      # 上传文档（文件/链接/失败重试 Tab）
+│   │       ├── Documents.vue   # 文档管理
+│   │       ├── Users.vue       # 用户管理（管理员专属）
+│   │       ├── Profiling.vue   # 性能分析
+│   │       └── Settings.vue    # LLM 设置
 │   ├── index.html
 │   ├── package.json
-│   ├── vite.config.js          # Vite 配置（代理 /api → 后端）
-│   └── src/
-│       ├── main.js             # Vue 入口
-│       ├── App.vue             # 根组件（导航布局，白色主题）
-│       ├── router.js           # 路由配置（含 /profiling）
-│       ├── api/
-│       │   └── index.js        # API 请求封装（axios + SSE fetch 流式）
-│       ├── store/
-│       │   └── profiling.js    # 性能分析数据 store（reactive）
-│       └── views/
-│           ├── Chat.vue        # 智能问答页（流式输出 + 预置问题 + 人设回答）
-│           ├── Upload.vue      # 文件上传页（文件上传 + 链接导入 + 导入历史）
-│           ├── Documents.vue   # 文档管理页（列表+详情）
-│           ├── Profiling.vue   # 性能分析页（耗时分布图 + 瓶颈分析）
-│           └── Settings.vue    # LLM 设置页（多模型预设 + API 格式切换）
-├── test_p0.py                  # P0 端到端自测脚本
-├── start.ps1                   # PowerShell 一键启动脚本
+│   └── vite.config.js
+├── start.ps1                   # PowerShell 一键启动
 └── README.md                   # 本文档
 ```
 
@@ -121,128 +138,130 @@ C:/Code/Qlipoth/
 
 ### 4.1 文档上传与解析
 
-支持格式：.docx, .xlsx, .xls, .pptx, .md, .txt
+支持格式：.docx, .xlsx, .xls, .pptx, .pdf, .md, .txt
 
 解析策略：
 - **Word (.docx)**：提取段落文本、标题层级、表格内容，转为 Markdown
-- **Excel (.xlsx)**：按 Sheet 提取，每个 Sheet 转为 Markdown 表格
+- **Excel (.xlsx)**：按 Sheet 提取，每个 Sheet 转为 Markdown 表格，宽表自动拆分
 - **PPT (.pptx)**：按 Slide 提取文本框内容
+- **PDF (.pdf)**：优先提取文本层；图片型 PDF 自动 OCR（Tesseract，支持中英文）
 - **Markdown/TXT**：直接存储
 
-### 4.2 在线文档链接导入（v20260522.1 新增）
+附加处理：
+- 自动提取 `@人名` 作为负责人元数据
+- 文件去重（同名文件不重复导入）
+- 导入历史持久化
 
-支持企业微信文档（doc.weixin.qq.com）和腾讯文档（docs.qq.com）的 doc/sheet 类型。
+### 4.2 在线文档链接导入
+
+支持企业微信文档（doc.weixin.qq.com）和腾讯文档（docs.qq.com）。
 
 **技术方案：**
-- 使用 Playwright 启动系统 Chrome（复用用户登录态）
-- 通过网络拦截捕获 `dop-api/opendoc`（doc）和 `dop-api/get/sheet`（sheet）接口响应
-- Doc 格式：base64 → protobuf → UTF-8 文本提取
-- Sheet 格式：base64 → zlib 解压 → protobuf → UTF-8 文本提取
-- 支持递归抓取嵌套文档（最多 5 层深度），自动检测循环引用
-- URL 去重：已导入的文档不会重复导入
-- 每次导入保存完整的文档层级树结构
-
-**嵌入链接识别：**
-从 protobuf 文本中正则提取 `HYPERLINK https://doc.weixin.qq.com/...` 格式的嵌入链接。
+- Playwright 启动系统 Chrome（复用用户登录态）
+- 网络拦截捕获 `dop-api/opendoc`（doc）和 `dop-api/get/sheet`（sheet）接口响应
+- protobuf 解码提取文本，保留 HYPERLINK 转为 Markdown 链接格式
+- 递归抓取嵌套文档（用户可控 0-3 层），SSE 实时推送进度
+- 父文档已导入不阻断，子文档照常录入
+- 失败记录持久化，支持后续重试
+- 导入历史记录完整父子关系和源链接
 
 ### 4.3 Agentic Search 查询
 
-两步 LLM 调用架构：
-- **Step 1 - 意图理解**：LLM 分析用户问题，输出 JSON 搜索策略（关键词、文件过滤、是否需要全文）
-- **Step 2 - 答案生成**：基于搜索结果，LLM 流式生成带引用来源的自然语言回答
+**搜索引擎（ripgrep）：**
+- 关键词扩展：3+字中文加去尾变体（覆盖率→覆盖），4字拆半，过滤短数字
+- priority 机制：精确中文关键词命中的文件保证入选
+- 文件选择：priority 文件前5 + 命中数排序填满共10个
+- 上下文摘录：统计/总计 section 50% 预算优先，超预算截取不跳过
+- 每关键词 max-count=200，避免大文件噪音
 
-搜索优化：
-- **中文 bigram 扩展**：LLM 生成的复合关键词自动拆分为 2 字 bigram，提升 grep 命中率
-- **Section 智能摘录**：大文件按 `##` 标题分 section，均匀分配上下文配额
-- **Windows 路径兼容**：grep 输出解析正确处理 Windows 盘符
+**LLM 回答：**
+- 人设：大型活动保障知识库助手，全局视角
+- 先总体后明细，不局限于某个部门
+- 引用文档：最多5个，在线链接可跳转，本地文档可打开 Markdown 渲染页
 
-### 4.4 知识库关联体系
+### 4.4 用户体系与权限
 
-导入的文档在 Markdown 头部记录关联关系：
-```markdown
-# 文档标题
+**三级角色：**
+- **admin（超级管理员）**：所有功能 + 用户管理
+- **super（超级用户）**：智能问答 + 上传文档 + 文档管理 + 查看所有人问答历史
+- **user（普通用户）**：智能问答 + 只看自己的问答历史
 
-> 来源: URL
-> 父文档: 主文档标题
-> 子文档: 子文档A, 子文档B, 子文档C
-```
+**认证机制：**
+- 用户名 + 密码注册/登录
+- 密码要求：8位以上，含大小写字母、数字、特殊字符
+- 数据库存储 PBKDF2-SHA256 哈希 + 随机盐
+- Cookie Token 自动登录（7天有效）
+- 未登录无法使用系统
 
-搜索时可通过关联信息发现相关文档，增强知识检索的完整性。
+### 4.5 聊天历史
+
+- 每次问答自动保存（问题 + 回答 + 引用文档 + 时间 + 用户）
+- Chat 页面左侧栏展示历史列表，按时间倒序
+- 点击历史项回显该条问答
+- admin/super 可看所有人历史，普通用户只看自己的
+
+### 4.6 失败重试
+
+- 递归抓取中失败的文档自动记录到 `failed_imports` 表
+- 上传文档页「失败重试」Tab（管理员可见）
+- 支持单选/全选批量重试
+- 成功或因重复跳过的自动从失败列表移除
 
 ---
 
-## 5. v20260522.1 新增 Feature
+## 5. v20260526.1 新增 Feature
 
-### 5.1 企业微信文档链接导入
-
-- **端点**：`POST /api/upload/url`
-- **请求体**：`{ "url": "...", "recursive": true, "max_depth": 5 }`
-- 支持 doc.weixin.qq.com、docs.qq.com、sheet.weixin.qq.com 等域名
-- 使用系统 Chrome + persistent context 复用登录态
-- 通过网络拦截获取文档数据（非 DOM 提取），稳定可靠
-
-### 5.2 Sheet 文档支持
-
-- Sheet 文档的 protobuf 数据经过 zlib 压缩，需额外解压步骤
-- 提取表格中的文本内容（列标题、单元格数据、超链接文本）
-- 与 doc 类型统一存储为 Markdown 格式
-
-### 5.3 递归嵌套导入
-
-- 自动识别文档中嵌入的子文档链接（HYPERLINK 格式）
-- 递归抓取最多 5 层深度
-- visited set 防止循环引用
-- 同一 browser context 内顺序抓取，避免反复启动浏览器
-- 已导入的 URL 自动跳过（不重复抓取）
-
-### 5.4 文档去重机制
-
-- documents 表新增 `source_url` 字段，记录标准化后的文档 URL
-- 导入前检查 URL 是否已存在，存在则返回 409（单文档）或标记为 skipped（递归）
-- URL 标准化：去除 query params，只保留 scheme + host + path
-
-### 5.5 导入层级树持久化
-
-- 新建 `import_trees` 表，每次导入保存完整的树结构 JSON
-- `GET /api/upload/trees` 接口查询所有导入历史
-- 前端上传页底部展示导入历史（Collapse 折叠 + 树形层级）
-
-### 5.6 前端链接导入 UI
-
-- 上传页改为 Tab 布局：「文件上传」+「链接导入」
-- 链接导入支持递归选项（checkbox，默认勾选）
-- 导入结果以树形层级展示（成功/跳过/失败三种状态）
-- 导入历史区域展示所有历史导入记录及其文档树
+| Feature | 说明 |
+|---------|------|
+| ripgrep 搜索引擎 | 替换原生 grep，JSON 模式输出，速度提升 2-5x |
+| priority 文件选择 | 精确中文关键词命中的文件保证入选上下文 |
+| 统计 section 优先 | 大文件中"统计/总计"标题的段落优先包含 |
+| PDF 支持 | pypdf 文本提取 + Tesseract OCR（图片型 PDF） |
+| 用户注册/登录 | 用户名+密码，PBKDF2 哈希，Cookie 7天自动登录 |
+| 三级权限 | admin/super/user，导航和功能按角色隔离 |
+| 用户管理页 | 管理员查看所有用户、修改角色、删除用户 |
+| 聊天历史 | 自动保存问答，左侧栏展示，按角色控制可见范围 |
+| 失败记录持久化 | 抓取失败的文档 URL 持久化，支持批量重试 |
+| UI 重构 | 左侧历史栏 + 主聊天区布局，登录页居中 |
+| 引用文档增强 | 在线链接蓝色跳转，本地文档绿色打开 Markdown 渲染页 |
+| @人名 Owner 提取 | 文档中 @人名 自动提取为负责人元数据 |
+| 递归层数用户可控 | 0-3 层，输入框选择 |
+| 北京时间统一 | 所有时间戳显式使用 UTC+8 |
 
 ---
 
 ## 6. 重点需求列表
 
-| 优先级 | 需求 | 状态 | 备注 |
-|--------|------|------|------|
-| P0 | 文件上传与格式转换 | 已完成 | 支持 docx/xlsx/pptx/md/txt，宽表自动拆分 |
-| P0 | Agentic Search 查询 | 已完成 | 两步 LLM 调用 + grep + bigram 扩展 |
-| P0 | SSE 流式输出 | 已完成 | 首字 1-2s 可见，体感大幅提升 |
-| P0 | 多模型兼容 | 已完成 | OpenAI/Anthropic 双格式，7 家预设 |
-| P0 | 前端界面 | 已完成 | 问答/上传/管理/设置/性能分析 |
-| P0 | 人设体系 | 已完成 | Soul.md 定义，研发负责人角色，自然语言风格 |
-| P0 | P0 自测用例 | 已完成 | 3 个端到端用例，40s 性能基线 |
-| P0 | 在线文档链接导入 | 已完成 | Playwright + 网络拦截 + protobuf 解码 |
-| P0 | 递归嵌套导入 | 已完成 | 最多 5 层深度，循环检测，去重跳过 |
-| P1 | TAPD 需求批量导入 | 已完成 | API 拉取 + 按簇拆分 + 索引生成 |
-| P1 | 性能分析 Profiling | 已完成 | 各阶段耗时可视化 + 瓶颈定位 |
-| P1 | Sheet 文档支持 | 已完成 | zlib + protobuf 解码，表格文本提取 |
-| P1 | 文档去重 | 已完成 | source_url 字段，URL 标准化比对 |
-| P1 | 导入层级树持久化 | 已完成 | import_trees 表 + 历史查询接口 + 前端展示 |
-| P1 | 去除策略 LLM 调用 | 待开发 | 直接从问题提取关键词，省 6-7s |
-| P1 | 上下文精简 | 待开发 | MAX_CONTEXT_CHARS 从 60K 降到 20-30K |
-| P2 | 对话历史记录 | 待开发 | 保存历史问答，支持回溯 |
-| P2 | 文档分类与标签 | 待开发 | 支持按分类组织知识库 |
+| 优先级 | 需求 | 状态 |
+|--------|------|------|
+| P0 | 文件上传与格式转换（含 PDF OCR） | 已完成 |
+| P0 | Agentic Search 查询（ripgrep + priority） | 已完成 |
+| P0 | SSE 流式输出 | 已完成 |
+| P0 | 多模型兼容（OpenAI/Anthropic 双格式） | 已完成 |
+| P0 | 用户注册/登录/权限体系 | 已完成 |
+| P0 | 人设体系（全局视角，先总体后明细） | 已完成 |
+| P0 | 在线文档链接导入（递归 + SSE 进度） | 已完成 |
+| P0 | 聊天历史持久化 | 已完成 |
+| P1 | 失败记录持久化 + 批量重试 | 已完成 |
+| P1 | 用户管理（角色修改/删除） | 已完成 |
+| P1 | @人名 Owner 提取 | 已完成 |
+| P1 | 引用文档链接（在线+本地） | 已完成 |
+| P1 | 导入历史（父子关系 + 源链接） | 已完成 |
+| P2 | 企微扫码登录 | 待开发（需企微应用权限） |
+| P2 | 文档分类与标签 | 待开发 |
+| P2 | 多轮对话上下文 | 待开发 |
 
 ---
 <!-- PLACEHOLDER_DEPLOY -->
 
 ## 7. 部署与运行
+
+**环境要求：**
+- Python 3.12+
+- Node.js 18+
+- ripgrep（`winget install BurntSushi.ripgrep.MSVC`）
+- Tesseract OCR（`winget install UB-Mannheim.TesseractOCR`）+ 中文语言包
+- Google Chrome（Playwright 抓取用）
 
 **一键启动（PowerShell）：**
 ```powershell
@@ -268,20 +287,21 @@ npm run dev
 
 **访问地址：** http://localhost:3000
 
-首次使用需在"设置"页配置 LLM API 信息（选择预设或手动填写 Base URL、API Key、模型名称、API 格式）。
-
-链接导入功能首次使用时会弹出 Chrome 窗口，需在窗口中完成企业微信登录，之后登录态会持久化到 `backend/.browser_data/` 目录。
+**首次使用：**
+1. 用预置管理员账号登录
+2. 在"设置"页配置 LLM API 信息
+3. 链接导入首次使用时会弹出 Chrome 窗口，需完成企业微信登录
 
 ---
 
-## 8. 性能基准（DeepSeek-chat，2026-05-19）
+## 8. 性能基准（DeepSeek-v4-pro，2026-05-26）
 
 | 指标 | 数值 |
 |------|------|
-| 平均总耗时 | 26.1s |
-| 搜索策略 LLM | 6.8s（26%） |
-| grep 搜索 + 摘录 | 0.4s（2%） |
-| 回答生成 LLM | 18.8s（72%） |
-| 首字输出延迟（流式） | ~8s（策略 LLM + 搜索后即开始流式） |
+| 平均总耗时 | ~20s |
+| 搜索策略 LLM | ~7s |
+| ripgrep 搜索 + 摘录 | ~0.1s |
+| 回答生成 LLM（流式） | ~12s |
+| 首字输出延迟 | ~8s（策略 LLM + 搜索后即开始流式） |
 
-**瓶颈**：LLM 调用占 98%，搜索本身极快。后续优化方向为去除策略 LLM 调用（-26%）和精简上下文（-30%）。
+**优化点**：ripgrep 替换 grep 后搜索阶段从 0.4s 降到 0.1s；priority 机制确保精确匹配文件不被淹没；统计 section 优先确保数量问题能拿到汇总数据。

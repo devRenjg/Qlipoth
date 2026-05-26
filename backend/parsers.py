@@ -1,7 +1,20 @@
 from pathlib import Path
+import re
 from docx import Document as DocxDocument
 from python_calamine import CalamineWorkbook
 from pptx import Presentation
+
+
+def extract_owners(text: str) -> list[str]:
+    """Extract @mentioned people from document text as task owners."""
+    matches = re.findall(r'@([一-鿿\w]{2,10})', text)
+    seen = set()
+    owners = []
+    for name in matches:
+        if name not in seen:
+            seen.add(name)
+            owners.append(name)
+    return owners
 
 
 def parse_docx(file_path: str) -> str:
@@ -139,11 +152,78 @@ def parse_text(file_path: str) -> str:
     return Path(file_path).read_text(encoding="utf-8")
 
 
+def parse_pdf(file_path: str) -> str:
+    from pypdf import PdfReader
+    import io
+    reader = PdfReader(file_path)
+    lines = []
+    has_text = False
+    for i, page in enumerate(reader.pages, 1):
+        text = page.extract_text()
+        if text and text.strip():
+            lines.append(f"## 第 {i} 页")
+            lines.append(text.strip())
+            lines.append("")
+            has_text = True
+
+    if has_text:
+        return "\n".join(lines)
+
+    # Image-based PDF: extract images and use LLM vision for OCR
+    all_images = []
+    for page in reader.pages:
+        for img in page.images:
+            all_images.append(img.data)
+
+    if all_images:
+        result = _ocr_images_with_llm(all_images)
+        if result:
+            return result
+
+    return ""
+
+
+def _ocr_images_with_llm(images_data: list[bytes]) -> str:
+    """Use Tesseract OCR to extract text from images."""
+    import subprocess
+    import tempfile
+    from PIL import Image
+    import io
+
+    tesseract_path = "C:/Program Files/Tesseract-OCR/tesseract.exe"
+
+    results = []
+    for i, img_data in enumerate(images_data[:10]):
+        try:
+            img = Image.open(io.BytesIO(img_data))
+            if img.mode == 'RGBA':
+                img = img.convert('RGB')
+
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                img.save(tmp.name)
+                tmp_path = tmp.name
+
+            proc = subprocess.run(
+                [tesseract_path, tmp_path, "stdout", "-l", "chi_sim+eng", "--psm", "6"],
+                capture_output=True, text=True, timeout=30, encoding="utf-8"
+            )
+            Path(tmp_path).unlink(missing_ok=True)
+
+            text = proc.stdout.strip()
+            if text:
+                results.append(f"## 第 {i+1} 页\n\n{text}")
+        except Exception:
+            continue
+
+    return "\n\n".join(results)
+
+
 PARSERS = {
     ".docx": parse_docx,
     ".xlsx": parse_xlsx,
     ".xls": parse_xls,
     ".pptx": parse_pptx,
+    ".pdf": parse_pdf,
     ".txt": parse_text,
     ".md": parse_text,
 }

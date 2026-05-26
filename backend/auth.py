@@ -1,0 +1,202 @@
+import uuid
+import secrets
+import hashlib
+import re
+from datetime import datetime, timezone, timedelta
+from fastapi import APIRouter, Request, Response, HTTPException
+from pydantic import BaseModel
+import aiosqlite
+from database import DB_PATH
+
+router = APIRouter(tags=["user"])
+
+_BJ_TZ = timezone(timedelta(hours=8))
+COOKIE_NAME = "qlipoth_token"
+COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+
+ROLES = {"admin": 0, "super": 1, "user": 2}
+
+
+def _now_bj() -> str:
+    return datetime.now(_BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _hash_password(password: str, salt: str = None) -> tuple[str, str]:
+    if not salt:
+        salt = secrets.token_hex(16)
+    hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000).hex()
+    return hashed, salt
+
+
+def _verify_password(password: str, hashed: str, salt: str) -> bool:
+    check, _ = _hash_password(password, salt)
+    return check == hashed
+
+
+def _validate_password(password: str) -> str | None:
+    """Returns error message if invalid, None if OK."""
+    if len(password) < 8:
+        return "密码至少 8 位"
+    if not re.search(r'[A-Z]', password):
+        return "密码需包含大写字母"
+    if not re.search(r'[a-z]', password):
+        return "密码需包含小写字母"
+    if not re.search(r'[0-9]', password):
+        return "密码需包含数字"
+    if not re.search(r'[!@#$%^&*()_+\-=\[\]{}|;:,.<>?/~]', password):
+        return "密码需包含特殊字符"
+    return None
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@router.get("/user/me")
+async def get_current_user(request: Request):
+    """Get current user from cookie token."""
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        return {"user": None}
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT id, username, role FROM users WHERE token = ?", (token,))
+        row = await cursor.fetchone()
+        if not row:
+            return {"user": None}
+        await db.execute("UPDATE users SET last_seen = ? WHERE id = ?", (_now_bj(), row["id"]))
+        await db.commit()
+        return {"user": {"id": row["id"], "username": row["username"], "role": row["role"]}}
+
+
+@router.post("/user/register")
+async def register_user(req: RegisterRequest, response: Response):
+    """Register a new user."""
+    username = req.username.strip()
+    if not username or len(username) > 20 or len(username) < 2:
+        raise HTTPException(400, "用户名长度 2-20 个字符")
+
+    pwd_err = _validate_password(req.password)
+    if pwd_err:
+        raise HTTPException(400, pwd_err)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT id FROM users WHERE username = ?", (username,))
+        if await cursor.fetchone():
+            raise HTTPException(409, f"用户名「{username}」已被注册")
+
+        hashed, salt = _hash_password(req.password)
+        token = secrets.token_urlsafe(32)
+
+        await db.execute(
+            "INSERT INTO users (bili_uid, username, password_hash, password_salt, role, token, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4())[:8], username, hashed, salt, "user", token, _now_bj()),
+        )
+        await db.commit()
+
+        cursor = await db.execute("SELECT id, role FROM users WHERE token = ?", (token,))
+        row = await cursor.fetchone()
+
+    response.set_cookie(COOKIE_NAME, token, max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax")
+    return {"user": {"id": row[0], "username": username, "role": row[1]}}
+
+
+@router.post("/user/login")
+async def login_user(req: LoginRequest, response: Response):
+    """Login with username and password."""
+    username = req.username.strip()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM users WHERE username = ?", (username,))
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(401, "用户名或密码错误")
+
+        if not _verify_password(req.password, row["password_hash"], row["password_salt"]):
+            raise HTTPException(401, "用户名或密码错误")
+
+        token = secrets.token_urlsafe(32)
+        await db.execute("UPDATE users SET token = ?, last_seen = ? WHERE id = ?", (token, _now_bj(), row["id"]))
+        await db.commit()
+
+    response.set_cookie(COOKIE_NAME, token, max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax")
+    return {"user": {"id": row["id"], "username": row["username"], "role": row["role"]}}
+
+
+@router.post("/user/logout")
+async def logout_user(request: Request, response: Response):
+    """Clear user cookie and invalidate token."""
+    token = request.cookies.get(COOKIE_NAME)
+    if token:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("UPDATE users SET token = NULL WHERE token = ?", (token,))
+            await db.commit()
+    response.delete_cookie(COOKIE_NAME)
+    return {"message": "已退出"}
+
+
+@router.get("/user/list")
+async def list_users(request: Request):
+    """List all users. Admin only."""
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        raise HTTPException(401, "未登录")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT role FROM users WHERE token = ?", (token,))
+        caller = await cursor.fetchone()
+        if not caller or caller["role"] != "admin":
+            raise HTTPException(403, "无权限")
+        cursor = await db.execute("SELECT id, username, role, last_seen FROM users ORDER BY id")
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+class RoleUpdateRequest(BaseModel):
+    role: str
+
+
+@router.put("/user/{user_id}/role")
+async def update_user_role(user_id: int, req: RoleUpdateRequest, request: Request):
+    """Update user role. Admin only."""
+    if req.role not in ("admin", "super", "user"):
+        raise HTTPException(400, "无效角色")
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        raise HTTPException(401, "未登录")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT role FROM users WHERE token = ?", (token,))
+        caller = await cursor.fetchone()
+        if not caller or caller["role"] != "admin":
+            raise HTTPException(403, "无权限")
+        await db.execute("UPDATE users SET role = ? WHERE id = ?", (req.role, user_id))
+        await db.commit()
+    return {"message": "已更新"}
+
+
+@router.delete("/user/{user_id}")
+async def delete_user(user_id: int, request: Request):
+    """Delete a user. Admin only."""
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        raise HTTPException(401, "未登录")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT id, role FROM users WHERE token = ?", (token,))
+        caller = await cursor.fetchone()
+        if not caller or caller["role"] != "admin":
+            raise HTTPException(403, "无权限")
+        if caller["id"] == user_id:
+            raise HTTPException(400, "不能删除自己")
+        await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        await db.commit()
+    return {"message": "已删除"}
