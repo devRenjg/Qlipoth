@@ -3,7 +3,7 @@ Write-Host "=== Qlipoth 启动脚本 ===" -ForegroundColor Cyan
 # Install backend dependencies
 Write-Host "`n[1/4] Installing backend dependencies..." -ForegroundColor Yellow
 Set-Location "$PSScriptRoot\backend"
-pip install -r requirements.txt -q
+py -3.12 -m pip install -r requirements.txt -q
 
 # Install frontend dependencies
 Write-Host "[2/4] Installing frontend dependencies..." -ForegroundColor Yellow
@@ -17,7 +17,7 @@ if (-not (Test-Path "node_modules")) {
 # Start backend
 Write-Host "[3/4] Starting backend (port 8000)..." -ForegroundColor Yellow
 Set-Location "$PSScriptRoot\backend"
-$backend = Start-Process -FilePath "python" -ArgumentList "main.py" -PassThru -NoNewWindow
+$backend = Start-Process -FilePath "py" -ArgumentList "-3.12", "main.py" -PassThru -NoNewWindow
 
 # Start frontend
 Write-Host "[4/4] Starting frontend (port 3000)..." -ForegroundColor Yellow

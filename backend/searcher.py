@@ -17,7 +17,7 @@ class SearchResult:
     content: str
     context_before: list[str]
     context_after: list[str]
-    is_original_keyword: bool = False
+    matched_keyword: str = ""  # 命中该行的(扩展后)关键词,用于 IDF 覆盖度打分
 
 
 def _get_kb_dir() -> str:
@@ -31,9 +31,12 @@ def _expand_keywords(keywords: list[str]) -> list[str]:
     - Keep original keyword
     - For 4-char Chinese compounds: split into two 2-char words
     - For 3+ char Chinese phrases: add variant without last char (e.g. 覆盖率→覆盖)
+    - Number+unit prefix: 数字后跟"年/月/届"等单位时,剥离单位前缀取核心实体
+      (e.g. 26年春晚→春晚,否则核心词被时间前缀粘连导致漏召)
     - For English/numbers: keep as-is, skip pure numbers under 3 chars
     """
     import re
+    _UNIT_PREFIX = set("年月日届期季版号周次轮")
     expanded = []
     seen = set()
     for kw in keywords:
@@ -45,10 +48,21 @@ def _expand_keywords(keywords: list[str]) -> list[str]:
         if len(kw) <= 2:
             continue
         parts = re.findall(r'[a-zA-Z0-9]+|[一-鿿]+', kw)
+        prev_is_digit = False
         for part in parts:
+            is_digit_part = part[0] < '一' and part.isdigit()
             if len(part) <= 1:
+                prev_is_digit = is_digit_part
                 continue
             if part[0] >= '一':
+                # 数字+单位前缀:剥离开头的时间/序数单位字,取核心实体
+                if prev_is_digit:
+                    core = part
+                    while len(core) >= 3 and core[0] in _UNIT_PREFIX:
+                        core = core[1:]
+                    if 2 <= len(core) < len(part) and core not in seen:
+                        seen.add(core)
+                        expanded.append(core)
                 if len(part) >= 3:
                     variant = part[:-1]
                     if variant not in seen:
@@ -65,10 +79,12 @@ def _expand_keywords(keywords: list[str]) -> list[str]:
                         expanded.append(half2)
             else:
                 if part.isdigit() and len(part) <= 2:
+                    prev_is_digit = is_digit_part
                     continue
                 if part not in seen:
                     seen.add(part)
                     expanded.append(part)
+            prev_is_digit = is_digit_part
     return expanded
 
 
@@ -120,35 +136,41 @@ def _rg_search(keyword: str, kb_path: str, file_pattern: str = "*") -> list[Sear
     return results
 
 
-def grep_search(keywords: list[str], file_pattern: str = "*", context_lines: int = 3) -> list[SearchResult]:
+class SearchResults(list):
+    """list 子类,额外携带排序所需的元数据,不破坏现有迭代/切片用法。"""
+    original_keywords: list[str]
+    keyword_df: dict[str, int]  # 每个(扩展)关键词命中的文件数,用于 IDF
+
+
+def grep_search(keywords: list[str], file_pattern: str = "*", context_lines: int = 3) -> "SearchResults":
     results = []
     kb_dir = _get_kb_dir()
     kb_path = Path(kb_dir)
     if not kb_path.exists():
-        return results
+        out = SearchResults()
+        out.original_keywords = [k.strip() for k in keywords if k.strip()]
+        out.keyword_df = {}
+        return out
 
     expanded = _expand_keywords(keywords)
-    priority_keywords = set()
-    for kw in keywords:
-        if len(kw) >= 3 and any('一' <= c <= '鿿' for c in kw):
-            priority_keywords.add(kw)
-            if len(kw) >= 4:
-                priority_keywords.add(kw[:-1])
 
+    keyword_df: dict[str, int] = {}
     for keyword in expanded:
         parsed = _rg_search(keyword, str(kb_path), file_pattern)
-        is_priority = keyword in priority_keywords
         for r in parsed:
-            r.is_original_keyword = is_priority
+            r.matched_keyword = keyword
+        keyword_df[keyword] = len({r.file for r in parsed})
         results.extend(parsed)
 
     seen = set()
-    unique = []
+    unique = SearchResults()
     for r in results:
         key = (r.file, r.line_number)
         if key not in seen:
             seen.add(key)
             unique.append(r)
+    unique.original_keywords = [k.strip() for k in keywords if k.strip()]
+    unique.keyword_df = keyword_df
     return unique
 
 

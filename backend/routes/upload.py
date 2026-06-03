@@ -545,3 +545,19 @@ async def delete_failed_import(record_id: int):
         await db.execute("DELETE FROM failed_imports WHERE id = ?", (record_id,))
         await db.commit()
     return {"message": "已删除"}
+
+
+class FailedReasonUpdate(BaseModel):
+    error: str
+
+
+@router.patch("/upload/failed/{record_id}")
+async def update_failed_import_reason(record_id: int, req: FailedReasonUpdate):
+    """Update the failure reason of a record after a retry fails again."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE failed_imports SET error = ?, created_at = ? WHERE id = ?",
+            (req.error, _now_bj(), record_id),
+        )
+        await db.commit()
+    return {"message": "已更新"}

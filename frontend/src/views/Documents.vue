@@ -5,7 +5,7 @@
       <el-input v-model="filterText" placeholder="筛选文档..." style="width: 240px" clearable />
     </div>
 
-    <el-table :data="filteredDocs" stripe v-loading="loading" empty-text="暂无文档">
+    <el-table :data="pagedDocs" stripe v-loading="loading" empty-text="暂无文档">
       <el-table-column prop="original_name" label="文件名" />
       <el-table-column prop="file_type" label="类型" width="80" />
       <el-table-column prop="file_size" label="大小" width="100">
@@ -20,6 +20,16 @@
       </el-table-column>
     </el-table>
 
+    <div class="pagination-bar" v-if="filteredDocs.length > pageSize">
+      <el-pagination
+        background
+        layout="prev, pager, next, jumper, total"
+        :total="filteredDocs.length"
+        :page-size="pageSize"
+        v-model:current-page="currentPage"
+      />
+    </div>
+
     <el-dialog v-model="dialogVisible" :title="currentDoc?.original_name" width="70%">
       <pre class="doc-content">{{ currentDoc?.content }}</pre>
     </el-dialog>
@@ -27,7 +37,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getDocuments, getDocument, deleteDocument } from '../api/index.js'
 
@@ -36,12 +46,22 @@ const loading = ref(false)
 const filterText = ref('')
 const dialogVisible = ref(false)
 const currentDoc = ref(null)
+const currentPage = ref(1)
+const pageSize = 50
 
 const filteredDocs = computed(() => {
   if (!filterText.value) return documents.value
   const q = filterText.value.toLowerCase()
   return documents.value.filter(d => d.original_name.toLowerCase().includes(q))
 })
+
+const pagedDocs = computed(() => {
+  const start = (currentPage.value - 1) * pageSize
+  return filteredDocs.value.slice(start, start + pageSize)
+})
+
+// 筛选变化时回到第 1 页
+watch(filterText, () => { currentPage.value = 1 })
 
 onMounted(loadDocs)
 
@@ -66,6 +86,9 @@ async function confirmDelete(row) {
   await deleteDocument(row.id)
   ElMessage.success('删除成功')
   await loadDocs()
+  // 删除后若当前页已无数据，回退一页
+  const maxPage = Math.max(1, Math.ceil(filteredDocs.value.length / pageSize))
+  if (currentPage.value > maxPage) currentPage.value = maxPage
 }
 
 function formatSize(bytes) {
@@ -79,4 +102,5 @@ function formatSize(bytes) {
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .doc-count { font-size: 14px; font-weight: normal; color: #909399; margin-left: 8px; }
 .doc-content { white-space: pre-wrap; word-break: break-word; max-height: 60vh; overflow-y: auto; font-size: 14px; line-height: 1.6; }
+.pagination-bar { margin-top: 20px; display: flex; justify-content: center; }
 </style>

@@ -108,7 +108,7 @@ const activeHistoryId = ref(null)
 const presetQuestions = [
   '示例活动值班多少人？',
   '示例活动大概有多少需求，主要有哪些内容？',
-  '26 年 CNY 版本覆盖率多少？',
+  '示例需求上线后的版本覆盖率多少，对比去年如何？',
 ]
 
 onMounted(() => { loadHistory() })

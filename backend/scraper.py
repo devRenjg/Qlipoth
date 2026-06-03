@@ -28,6 +28,7 @@ async def scrape_tencent_doc(url: str, timeout_ms: int = 60000) -> tuple[str, st
     if not validate_tencent_doc_url(url):
         raise ValueError(f"不支持的链接，仅支持: {', '.join(ALLOWED_HOSTS)}")
 
+    url = _sanitize_doc_url(url)
     BROWSER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     async with async_playwright() as p:
@@ -437,6 +438,28 @@ def _decode_protobuf_text(raw: bytes) -> str:
     return full_text.strip()
 
 
+def _sanitize_doc_url(url: str) -> str:
+    """Trim rich-text pollution that gets glued onto extracted doc URLs.
+
+    Embedded links pulled from doc bodies can carry trailing rich-text encoding
+    (e.g. `&$<uuid>:JZ*FF000000[v8.80.0]...`), since the source markers have no
+    whitespace to delimit the URL. A valid Tencent/WeChat doc URL is
+    `/doc/<id>?scode=<alnum>`; cut everything once a non-URL token appears.
+    """
+    # Cut at known rich-text / attribute markers that never belong in a URL.
+    for marker in ("&$", "&isEnterEdit", " docLink", "docLink", "[v", ":JZ", "JZ*", "(", "（", "【"):
+        idx = url.find(marker)
+        if idx != -1:
+            url = url[:idx]
+    # scode value is alphanumeric only; drop anything after the first illegal char.
+    m = re.match(r'(https://[^?]+\?scode=[A-Za-z0-9]+)', url)
+    if m:
+        return m.group(1)
+    # No scode param: keep up to the first non-URL-safe character.
+    m = re.match(r'(https://[^\s一-鿿\[\](){}（）【】*!]+)', url)
+    return m.group(1) if m else url
+
+
 def _extract_embedded_links(text: str) -> list[str]:
     """Extract embedded document URLs from scraped text."""
     # Match both raw HYPERLINK format and markdown link format
@@ -452,10 +475,11 @@ def _extract_embedded_links(text: str) -> list[str]:
     cleaned = []
     seen = set()
     for url in raw_urls:
-        url = re.split(r"\s+docLink", url)[0]
-        url = url.split("&isEnterEdit")[0]
+        url = _sanitize_doc_url(url)
         parsed = urlparse(url)
         if parsed.hostname not in ALLOWED_HOSTS:
+            continue
+        if not parsed.path or parsed.path == "/":
             continue
         normalized = f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
         if normalized in seen:
@@ -515,6 +539,7 @@ async def _extract_from_dom(page) -> str:
 
 async def _scrape_single_in_context(context, url: str, timeout_ms: int = 60000) -> dict:
     """Scrape a single doc using an existing browser context. Returns result dict."""
+    url = _sanitize_doc_url(url)
     page = await context.new_page()
     captured = {}
 
@@ -583,6 +608,7 @@ async def scrape_tencent_doc_recursive(
     if not validate_tencent_doc_url(url):
         raise ValueError(f"不支持的链接，仅支持: {', '.join(ALLOWED_HOSTS)}")
 
+    url = _sanitize_doc_url(url)
     BROWSER_DATA_DIR.mkdir(parents=True, exist_ok=True)
     results = []
     visited = set()

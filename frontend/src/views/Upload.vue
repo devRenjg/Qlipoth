@@ -77,15 +77,13 @@
         </div>
         <el-table :data="failedImports" stripe v-loading="loadingFailed" empty-text="暂无失败记录" @selection-change="onFailedSelectionChange" ref="failedTableRef">
           <el-table-column type="selection" width="40" />
-          <el-table-column prop="title" label="标题" min-width="150">
-            <template #default="{ row }">{{ row.title || '(无标题)' }}</template>
-          </el-table-column>
-          <el-table-column prop="error" label="失败原因" width="160" />
-          <el-table-column prop="url" label="链接" min-width="200">
+          <el-table-column prop="title" label="标题" min-width="220">
             <template #default="{ row }">
-              <a :href="row.url" target="_blank" class="retry-link">{{ row.url.slice(0, 50) }}...</a>
+              <a v-if="row.url" :href="row.url" target="_blank" class="retry-link">{{ row.title || '(无标题)' }}</a>
+              <span v-else>{{ row.title || '(无标题)' }}</span>
             </template>
           </el-table-column>
+          <el-table-column prop="error" label="失败原因" min-width="220" show-overflow-tooltip />
           <el-table-column prop="created_at" label="时间" width="160" />
           <el-table-column label="操作" width="100">
             <template #default="{ row }">
@@ -387,13 +385,26 @@ async function retrySelected() {
   retrying.value = true
   let success = 0, fail = 0
   for (const item of selectedFailed.value) {
+    let lastError = ''
     try {
       const resp = await fetch('/api/upload/url/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: item.url, max_depth: 0 }),
       })
-      if (!resp.ok) { fail++; continue }
+      if (!resp.ok) {
+        // 409 = 已导入过，视为成功并清除失败记录
+        if (resp.status === 409) {
+          await axios.delete(`/api/upload/failed/${item.id}`)
+          success++
+          continue
+        }
+        const errData = await resp.json().catch(() => ({}))
+        lastError = errData.detail || `HTTP ${resp.status}`
+        updateFailedReason(item.id, lastError)
+        fail++
+        continue
+      }
       const reader = resp.body.getReader()
       const decoder = new TextDecoder()
       let buffer = '', imported = false, skipped = false
@@ -409,6 +420,8 @@ async function retrySelected() {
             const msg = JSON.parse(line.slice(6))
             if (msg.type === 'progress' && msg.data.status === 'success') imported = true
             if (msg.type === 'progress' && msg.data.status === 'skipped') skipped = true
+            if (msg.type === 'progress' && msg.data.status === 'failed') lastError = msg.data.error || ''
+            if (msg.type === 'error') lastError = msg.data.error || ''
             if (msg.type === 'done' && msg.data.success > 0) imported = true
           } catch {}
         }
@@ -417,16 +430,28 @@ async function retrySelected() {
         await axios.delete(`/api/upload/failed/${item.id}`)
         success++
       } else {
+        updateFailedReason(item.id, lastError || '重试未导入成功，原因未知')
         fail++
       }
-    } catch {
+    } catch (e) {
+      updateFailedReason(item.id, lastError || e.message || '网络错误')
       fail++
     }
   }
   retrying.value = false
-  ElMessage.success(`重试完成：成功 ${success} 个${fail ? `，失败 ${fail} 个` : ''}`)
+  if (fail) {
+    ElMessage.warning(`重试完成：成功 ${success} 个，失败 ${fail} 个，失败原因见下方表格`)
+  } else {
+    ElMessage.success(`重试完成：成功 ${success} 个`)
+  }
   loadFailedImports()
   loadHistory()
+}
+
+function updateFailedReason(id, reason) {
+  const row = failedImports.value.find(r => r.id === id)
+  if (row) row.error = reason
+  axios.patch(`/api/upload/failed/${id}`, { error: reason }).catch(() => {})
 }
 </script>
 
