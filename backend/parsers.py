@@ -154,12 +154,14 @@ def parse_text(file_path: str) -> str:
 
 def parse_pdf(file_path: str) -> str:
     from pypdf import PdfReader
-    import io
     reader = PdfReader(file_path)
     lines = []
     has_text = False
     for i, page in enumerate(reader.pages, 1):
-        text = page.extract_text()
+        try:
+            text = page.extract_text()
+        except Exception:
+            text = ""
         if text and text.strip():
             lines.append(f"## 第 {i} 页")
             lines.append(text.strip())
@@ -169,51 +171,77 @@ def parse_pdf(file_path: str) -> str:
     if has_text:
         return "\n".join(lines)
 
-    # Image-based PDF: extract images and use LLM vision for OCR
-    all_images = []
-    for page in reader.pages:
-        for img in page.images:
-            all_images.append(img.data)
-
-    if all_images:
-        result = _ocr_images_with_llm(all_images)
-        if result:
-            return result
-
-    return ""
+    # Image-based PDF: render each page to an image via PyMuPDF, then OCR.
+    # PyMuPDF rendering avoids pypdf's decompression limit on embedded images.
+    return _ocr_pdf_pages(file_path)
 
 
-def _ocr_images_with_llm(images_data: list[bytes]) -> str:
-    """Use Tesseract OCR to extract text from images."""
+def _ocr_image_tesseract(img, tesseract_path: str) -> str:
+    """OCR a PIL image, slicing tall images into strips.
+
+    Tesseract rejects images above ~100M pixels ("Image too large"), which
+    happens with long marketing/poster PDFs. Slice by height and concatenate.
+    """
     import subprocess
     import tempfile
-    from PIL import Image
-    import io
 
+    W, H = img.size
+    strip_height = 2000
+    parts = []
+    for top in range(0, H, strip_height):
+        crop = img.crop((0, top, W, min(top + strip_height, H)))
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                tmp_path = tmp.name
+            crop.save(tmp_path)
+            proc = subprocess.run(
+                [tesseract_path, tmp_path, "stdout", "-l", "chi_sim+eng", "--psm", "6"],
+                capture_output=True, text=True, timeout=60, encoding="utf-8"
+            )
+            text = (proc.stdout or "").strip()
+            if text:
+                parts.append(text)
+        except Exception:
+            continue
+        finally:
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
+    return "\n".join(parts)
+
+
+def _ocr_pdf_pages(file_path: str, max_pages: int = 30) -> str:
+    """Render each PDF page to an image with PyMuPDF, then OCR via Tesseract.
+
+    Rendering whole pages avoids pypdf's per-image decompression limit, which
+    fails on PDFs containing large embedded images (LimitReachedError).
+    """
+    import fitz
+    from PIL import Image
+
+    Image.MAX_IMAGE_PIXELS = None  # allow tall poster-style pages
     tesseract_path = "C:/Program Files/Tesseract-OCR/tesseract.exe"
 
     results = []
-    for i, img_data in enumerate(images_data[:10]):
-        try:
-            img = Image.open(io.BytesIO(img_data))
-            if img.mode == 'RGBA':
-                img = img.convert('RGB')
+    try:
+        doc = fitz.open(file_path)
+    except Exception:
+        return ""
 
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                img.save(tmp.name)
-                tmp_path = tmp.name
-
-            proc = subprocess.run(
-                [tesseract_path, tmp_path, "stdout", "-l", "chi_sim+eng", "--psm", "6"],
-                capture_output=True, text=True, timeout=30, encoding="utf-8"
-            )
-            Path(tmp_path).unlink(missing_ok=True)
-
-            text = proc.stdout.strip()
-            if text:
-                results.append(f"## 第 {i+1} 页\n\n{text}")
-        except Exception:
-            continue
+    try:
+        for i in range(min(doc.page_count, max_pages)):
+            try:
+                page = doc.load_page(i)
+                # 2x zoom for sharper text -> better OCR accuracy
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                text = _ocr_image_tesseract(img, tesseract_path)
+                if text:
+                    results.append(f"## 第 {i+1} 页\n\n{text}")
+            except Exception:
+                continue
+    finally:
+        doc.close()
 
     return "\n\n".join(results)
 
