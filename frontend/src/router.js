@@ -8,6 +8,7 @@ const routes = [
   { path: '/profiling', component: () => import('./views/Profiling.vue') },
   { path: '/settings', component: () => import('./views/Settings.vue') },
   { path: '/users', component: () => import('./views/Users.vue') },
+  { path: '/openspec', component: () => import('./views/OpenSpec.vue') },
 ]
 
 export default createRouter({

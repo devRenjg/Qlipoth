@@ -31,7 +31,7 @@
     </div>
 
     <el-dialog v-model="dialogVisible" :title="currentDoc?.original_name" width="70%">
-      <pre class="doc-content">{{ currentDoc?.content }}</pre>
+      <div class="markdown-body doc-content" v-html="renderedContent"></div>
     </el-dialog>
   </div>
 </template>
@@ -40,6 +40,8 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getDocuments, getDocument, deleteDocument } from '../api/index.js'
+import { renderMarkdown } from '../utils/markdown.js'
+import 'github-markdown-css/github-markdown-light.css'
 
 const documents = ref([])
 const loading = ref(false)
@@ -48,6 +50,8 @@ const dialogVisible = ref(false)
 const currentDoc = ref(null)
 const currentPage = ref(1)
 const pageSize = 50
+
+const renderedContent = computed(() => renderMarkdown(currentDoc.value?.content))
 
 const filteredDocs = computed(() => {
   if (!filterText.value) return documents.value
@@ -101,6 +105,6 @@ function formatSize(bytes) {
 <style scoped>
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .doc-count { font-size: 14px; font-weight: normal; color: #909399; margin-left: 8px; }
-.doc-content { white-space: pre-wrap; word-break: break-word; max-height: 60vh; overflow-y: auto; font-size: 14px; line-height: 1.6; }
+.doc-content { max-height: 65vh; overflow-y: auto; padding: 16px; font-size: 14px; }
 .pagination-bar { margin-top: 20px; display: flex; justify-content: center; }
 </style>

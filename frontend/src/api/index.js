@@ -12,12 +12,12 @@ export function queryKnowledgeBase(question) {
   return api.post('/query', { question })
 }
 
-export function queryKnowledgeBaseStream(question, { onMeta, onChunk, onDone, onError }) {
+export function queryKnowledgeBaseStream(question, { onMeta, onChunk, onDone, onError }, conversationId) {
   const controller = new AbortController()
   fetch('/api/query/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, conversation_id: conversationId || null }),
     signal: controller.signal,
   }).then(async (resp) => {
     if (!resp.ok) {
@@ -96,8 +96,20 @@ export function getChatHistory(userId) {
   return api.get('/chat/history', { params })
 }
 
-export function saveChatHistory(question, answer, sourceUrls, userId) {
-  return api.post('/chat/history', { question, answer, source_urls: sourceUrls, user_id: userId })
+export function saveChatHistory(question, answer, sourceUrls, userId, conversationId) {
+  return api.post('/chat/history', {
+    question, answer, source_urls: sourceUrls, user_id: userId,
+    conversation_id: conversationId || null,
+  })
+}
+
+export function getConversations(userId) {
+  const params = userId ? { user_id: userId } : {}
+  return api.get('/chat/conversations', { params })
+}
+
+export function getConversation(conversationId) {
+  return api.get(`/chat/conversation/${conversationId}`)
 }
 
 export function deleteChatHistory(id) {

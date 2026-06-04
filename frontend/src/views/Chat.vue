@@ -2,21 +2,25 @@
   <div class="chat-wrapper">
     <div class="history-sidebar">
       <div class="sidebar-header">
-        <span>问答历史</span>
+        <span>对话历史</span>
         <el-button size="small" type="primary" text @click="newChat">新对话</el-button>
       </div>
       <div class="sidebar-list">
         <div
-          v-for="item in history"
-          :key="item.id"
+          v-for="item in conversations"
+          :key="item.conversation_id"
           class="history-item"
-          :class="{ active: activeHistoryId === item.id }"
-          @click="loadHistoryItem(item)"
+          :class="{ active: conversationId === item.conversation_id }"
+          @click="loadConversation(item)"
         >
-          <div class="history-question">{{ item.question }}</div>
-          <div class="history-meta"><span class="history-time">{{ item.created_at }}</span> <span class="history-user">{{ item.user_name }}</span></div>
+          <div class="history-question">{{ item.last_question }}</div>
+          <div class="history-meta">
+            <span class="history-time">{{ item.created_at }}</span>
+            <span v-if="item.turn_count > 1" class="history-turns">{{ item.turn_count }} 轮</span>
+            <span class="history-user">{{ item.user_name }}</span>
+          </div>
         </div>
-        <div v-if="!history.length" class="sidebar-empty">暂无记录</div>
+        <div v-if="!conversations.length" class="sidebar-empty">暂无记录</div>
       </div>
     </div>
     <div class="chat-view">
@@ -53,7 +57,7 @@
         </div>
         <div v-for="(msg, i) in messages" :key="i" :class="['message', msg.role]">
           <div class="message-content">
-            <div class="message-text" v-html="msg.html || msg.text"></div>
+            <div class="message-text" :class="{ 'markdown-body': msg.html }" v-html="msg.html || msg.text"></div>
             <div v-if="msg.sourceUrls && msg.sourceUrls.length" class="message-refs">
               <div class="refs-label">引用文档：</div>
               <div v-for="(s, idx) in msg.sourceUrls" :key="idx" class="ref-item">
@@ -94,16 +98,18 @@
 <script setup>
 import { ref, inject, nextTick, onMounted } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
-import { queryKnowledgeBaseStream, getChatHistory, saveChatHistory } from '../api/index.js'
+import { queryKnowledgeBaseStream, getConversations, getConversation, saveChatHistory } from '../api/index.js'
 import { addProfilingRecord } from '../store/profiling.js'
+import { renderMarkdown } from '../utils/markdown.js'
+import 'github-markdown-css/github-markdown-light.css'
 
 const currentUser = inject('currentUser')
 const messages = ref([])
 const input = ref('')
 const loading = ref(false)
 const messagesRef = ref(null)
-const history = ref([])
-const activeHistoryId = ref(null)
+const conversations = ref([])
+const conversationId = ref(null)
 
 const presetQuestions = [
   '示例活动值班多少人？',
@@ -111,28 +117,41 @@ const presetQuestions = [
   '示例需求上线后的版本覆盖率多少，对比去年如何？',
 ]
 
-onMounted(() => { loadHistory() })
+onMounted(() => { loadConversations() })
 
-async function loadHistory() {
+async function loadConversations() {
   try {
     const role = currentUser?.value?.role
     const userId = (role === 'admin' || role === 'super') ? null : currentUser?.value?.id
-    const { data } = await getChatHistory(userId)
-    history.value = data
+    const { data } = await getConversations(userId)
+    conversations.value = data
   } catch {}
 }
 
-function loadHistoryItem(item) {
-  activeHistoryId.value = item.id
-  messages.value = [
-    { role: 'user', text: item.question },
-    { role: 'assistant', text: item.answer, html: formatMarkdown(item.answer), sourceUrls: item.source_urls || [], timing: null },
-  ]
+async function loadConversation(item) {
+  try {
+    const { data } = await getConversation(item.conversation_id)
+    const msgs = []
+    for (const turn of data) {
+      msgs.push({ role: 'user', text: turn.question })
+      msgs.push({
+        role: 'assistant',
+        text: turn.answer,
+        html: formatMarkdown(turn.answer),
+        sourceUrls: turn.source_urls || [],
+        timing: null,
+      })
+    }
+    messages.value = msgs
+    // legacy 单轮伪会话不可续聊（无真实 conversation_id），续聊另起新会话
+    conversationId.value = item.conversation_id.startsWith('legacy-') ? null : item.conversation_id
+    await scrollToBottom()
+  } catch {}
 }
 
 function newChat() {
   messages.value = []
-  activeHistoryId.value = null
+  conversationId.value = null
   input.value = ''
 }
 
@@ -149,6 +168,9 @@ function viewLocalDoc(file) {
 async function sendMessage() {
   const question = input.value.trim()
   if (!question || loading.value) return
+
+  if (!conversationId.value) conversationId.value = crypto.randomUUID()
+  const convId = conversationId.value
 
   messages.value.push({ role: 'user', text: question })
   input.value = ''
@@ -186,21 +208,19 @@ async function sendMessage() {
       // Save to history
       const answer = messages.value[msgIdx].text
       const userId = currentUser?.value?.id || null
-      saveChatHistory(question, answer, finalSourceUrls, userId).then(() => loadHistory()).catch(() => {})
+      saveChatHistory(question, answer, finalSourceUrls, userId, convId)
+        .then(() => loadConversations()).catch(() => {})
     },
     onError(err) {
       messages.value[msgIdx].text = err || '请求失败，请检查后端服务和 LLM 配置'
       messages.value[msgIdx].html = ''
       loading.value = false
     },
-  })
+  }, convId)
 }
 
 function formatMarkdown(text) {
-  return text
-    .replace(/\n/g, '<br>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`(.*?)`/g, '<code>$1</code>')
+  return renderMarkdown(text)
 }
 
 async function scrollToBottom() {
@@ -249,6 +269,7 @@ async function scrollToBottom() {
 }
 .history-meta { display: flex; gap: 8px; margin-top: 4px; font-size: 11px; }
 .history-user { color: #4d6bfe; }
+.history-turns { color: #67c23a; }
 .history-time { color: #999; }
 .sidebar-empty { padding: 20px 16px; color: #999; font-size: 13px; text-align: center; }
 .chat-view { flex: 1; display: flex; flex-direction: column; font-size: 15px; min-width: 0; }
@@ -318,6 +339,15 @@ async function scrollToBottom() {
   color: #1a1a2e;
   border: 1px solid #e8e8e8;
 }
+.message-text.markdown-body {
+  background: transparent;
+  font-size: 15px;
+  color: #1a1a2e;
+}
+.message-text.markdown-body :deep(table) { margin: 8px 0; }
+.message-text.markdown-body :deep(pre) { background: #eef0f3; }
+.message-text.markdown-body :deep(h1),
+.message-text.markdown-body :deep(h2) { border-bottom: 1px solid #e0e0e0; }
 .message-sources { margin-top: 8px; font-size: 13px; }
 .source-item { padding: 4px 0; border-bottom: 1px solid #e8e8e8; color: #666666; }
 .source-item code { color: #4d6bfe; margin-right: 8px; }

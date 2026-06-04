@@ -71,4 +71,14 @@ async def init_db():
             await db.execute("ALTER TABLE documents ADD COLUMN source_url TEXT")
         except Exception:
             pass
+        try:
+            await db.execute("ALTER TABLE chat_history ADD COLUMN conversation_id TEXT")
+        except Exception:
+            pass
+        try:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_history(conversation_id, id)"
+            )
+        except Exception:
+            pass
         await db.commit()

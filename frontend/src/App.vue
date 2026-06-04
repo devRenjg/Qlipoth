@@ -57,6 +57,7 @@
         <el-menu-item index="/profiling" v-if="user.role === 'admin'">性能分析</el-menu-item>
         <el-menu-item index="/settings" v-if="user.role === 'admin'">设置</el-menu-item>
         <el-menu-item index="/users" v-if="user.role === 'admin'">用户管理</el-menu-item>
+        <el-menu-item index="/openspec" v-if="user.role === 'admin'">OpenSpec</el-menu-item>
       </el-menu>
       <div class="user-info">
         <span class="username">{{ user.username }}</span>
