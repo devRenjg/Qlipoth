@@ -1,7 +1,7 @@
 # 克里珀 - 大型活动保障知识库技术方案文档
 
-> 当前版本：20260603.1  
-> 最后更新：2026-06-03
+> 当前版本：20260604.1  
+> 最后更新：2026-06-04
 
 ---
 
@@ -9,6 +9,7 @@
 
 | 版本号 | 日期 | 变更内容 | 作者 |
 |--------|------|----------|------|
+| 20260604.1 | 2026-06-04 | 多轮对话上下文（指代消解 + 历史回灌，旁路不动搜索内核）、OpenSpec 规范驱动开发看板、Markdown 富文本渲染（marked + DOMPurify） | Claude + User |
 | 20260603.1 | 2026-06-03 | 搜索排序两波优化（IDF 覆盖度打分）、分词器修复（数字+单位前缀拆分）、离线评测体系（golden set + Recall/MRR）、Claude 模型接入与对比 | Claude + User |
 | 20260526.1 | 2026-05-26 | 用户体系、权限分层、ripgrep 搜索引擎、PDF/OCR 支持、聊天历史、UI 重构 | Claude + User |
 | 20260522.1 | 2026-05-22 | 企业微信文档链接导入、Playwright 抓取、递归嵌套导入、Sheet 支持、去重机制 | Claude + User |
@@ -31,6 +32,8 @@
 - **零向量数据库依赖**：不需要 embedding 模型、向量数据库等额外基础设施
 - **在线文档直接导入**：支持企业微信文档/腾讯文档链接导入，Playwright 无头浏览器自动抓取
 - **权限隔离**：三级角色体系（管理员/超级用户/普通用户），不同角色不同功能权限
+- **多轮对话**：追问时自动指代消解 + 历史回灌，理解"那市场侧呢"式省略，全程旁路不影响单问召回
+- **规范驱动开发**：OpenSpec 看板沉淀能力规范（specs）与变更提案（changes），代码与文档同源演进
 
 ---
 
@@ -49,6 +52,8 @@
 | 在线文档抓取 | Playwright（Chromium）+ 网络拦截 + protobuf 解码 |
 | 流式传输 | Server-Sent Events (SSE) |
 | 认证 | Cookie Token + PBKDF2 密码哈希 + 角色权限 |
+| 富文本渲染 | marked（Markdown → HTML）+ DOMPurify（XSS 净化 + 防反向标签劫持） |
+| 规范管理 | OpenSpec（specs 能力规范 + changes 变更提案，CLI 归档生成 spec） |
 
 ### 2.2 系统架构
 
@@ -58,12 +63,15 @@
   → 角色权限校验
 
 用户提问
+  → Step 0（仅追问时）：有 conversation_id → 载入近 3 轮历史 → LLM 指代消解（"那市场侧呢"→"春晚市场侧保障人数"）
   → Step 1: LLM 理解意图，生成搜索策略（精确关键词 + 文件过滤）
   → Step 2: 关键词扩展 + ripgrep JSON 搜索 + IDF 覆盖度文件排序 + 统计 section 优先摘录
-  → Step 3: LLM 基于搜索结果流式生成回答（全局视角，先总体后明细）
+  → Step 3: LLM 基于搜索结果流式生成回答（全局视角，先总体后明细；追问时注入对话历史保持连贯）
   → 返回回答 + 引用文档链接（最多5个）+ 耗时分析
-  → 自动保存到聊天历史
+  → 自动保存到聊天历史（按 conversation_id 归组）
 ```
+
+> 多轮对话为**旁路设计**：新会话首轮无历史 → 跳过 Step 0 → 与单问字节级一致，离线 golden set 指标无劣化。设计详见 [§10 多轮对话上下文设计](#10-多轮对话上下文设计)。
 
 ### 2.3 搜索引擎架构
 
@@ -101,11 +109,11 @@ C:/Code/Qlipoth/
 │   ├── auth.py                 # 用户认证（注册/登录/角色/Token）
 │   ├── config.py               # 配置管理
 │   ├── config.json             # 运行时配置文件
-│   ├── database.py             # SQLite 初始化（documents/import_trees/users/chat_history/failed_imports）
+│   ├── database.py             # SQLite 初始化（documents/import_trees/users/chat_history/failed_imports）+ 幂等迁移
 │   ├── parsers.py              # 文档解析器（docx/xlsx/pptx/pdf+OCR/md/txt）
 │   ├── searcher.py             # 搜索引擎（ripgrep JSON + 关键词扩展 + fallback）
 │   ├── scraper.py              # 在线文档抓取（Playwright + protobuf + 递归 + 链接保留）
-│   ├── llm.py                  # LLM 调用（双格式 + 流式 + 人设注入 + 搜索策略 prompt）
+│   ├── llm.py                  # LLM 调用（双格式 + 流式 + 人设注入 + 搜索策略/指代消解/历史回灌 prompt）
 │   ├── Soul.md                 # 人设定义（活动保障知识库助手）
 │   ├── requirements.txt        # Python 依赖
 │   ├── metadata.db             # SQLite 数据库
@@ -118,24 +126,30 @@ C:/Code/Qlipoth/
 │   │   └── reports/            # 评测报告（按 tag + 时间戳，md + json）
 │   └── routes/
 │       ├── upload.py           # 文件上传 + 链接导入（SSE 流式）+ 失败记录 + 重试
-│       ├── query.py            # 查询接口（SSE 流式）+ IDF 覆盖度文件排序 + 聊天历史 CRUD
-│       └── documents.py        # 文档管理 + Markdown 渲染查看 + 设置
+│       ├── query.py            # 查询接口（SSE 流式）+ IDF 覆盖度文件排序 + 多轮上下文（指代消解/历史滑窗）+ 聊天历史/会话 CRUD
+│       ├── documents.py        # 文档管理 + Markdown 渲染查看 + 设置
+│       └── openspec.py         # OpenSpec 看板接口（admin 专属，解析 specs/changes）
 ├── frontend/
 │   ├── src/
 │   │   ├── App.vue             # 根组件（登录/注册 + 角色导航 + 用户信息）
 │   │   ├── router.js           # 路由配置
-│   │   ├── api/index.js        # API 封装（REST + SSE + 认证）
+│   │   ├── api/index.js        # API 封装（REST + SSE + 认证 + 会话历史）
 │   │   ├── store/profiling.js  # 性能分析 store
+│   │   ├── utils/markdown.js   # Markdown 渲染（marked + DOMPurify 净化）
 │   │   └── views/
-│   │       ├── Chat.vue        # 智能问答（左侧历史栏 + 主聊天区）
+│   │       ├── Chat.vue        # 智能问答（会话分组侧栏 + 主聊天区 + 追问续聊）
 │   │       ├── Upload.vue      # 上传文档（文件/链接/失败重试 Tab）
-│   │       ├── Documents.vue   # 文档管理
+│   │       ├── Documents.vue   # 文档管理 + Markdown 富文本预览
 │   │       ├── Users.vue       # 用户管理（管理员专属）
 │   │       ├── Profiling.vue   # 性能分析
+│   │       ├── OpenSpec.vue    # OpenSpec 规范看板（管理员专属）
 │   │       └── Settings.vue    # LLM 设置
 │   ├── index.html
 │   ├── package.json
 │   └── vite.config.js
+├── openspec/                   # 规范驱动开发目录
+│   ├── specs/                  # 已实现能力规范（agentic-search/chat-history/multi-turn-context 等）
+│   └── changes/                # 变更提案（proposal/design/spec/tasks），archive/ 存归档
 ├── start.ps1                   # PowerShell 一键启动
 └── README.md                   # 本文档
 ```
@@ -203,14 +217,22 @@ C:/Code/Qlipoth/
 - Cookie Token 自动登录（7天有效）
 - 未登录无法使用系统
 
-### 4.5 聊天历史
+### 4.5 聊天历史与多轮对话
 
-- 每次问答自动保存（问题 + 回答 + 引用文档 + 时间 + 用户）
-- Chat 页面左侧栏展示历史列表，按时间倒序
-- 点击历史项回显该条问答
+- 每次问答自动保存（问题 + 回答 + 引用文档 + 时间 + 用户 + conversation_id）
+- Chat 页面左侧栏按**会话分组**展示，显示末轮问题、轮次数、时间、用户，按时间倒序
+- 点击会话载入全部轮次（user/assistant 交替回显），可在原会话继续追问
+- 追问时自动指代消解 + 历史回灌，理解"那市场侧呢""这个再细化下"式省略
 - admin/super 可看所有人历史，普通用户只看自己的
+- 历史无 conversation_id 的旧记录以单轮伪会话（`legacy-{id}`）兼容渲染
 
-### 4.6 失败重试
+### 4.6 OpenSpec 规范看板（管理员专属）
+
+- 规范驱动开发：能力规范沉淀于 `openspec/specs/`，变更提案位于 `openspec/changes/`
+- 看板展示已实现能力（Purpose + Requirement/Scenario）与待办提案（Why/What Changes + 任务进度）
+- 变更通过 CLI 归档（`openspec archive`）后自动生成 spec，代码与文档同源演进
+
+### 4.7 失败重试
 
 - 递归抓取中失败的文档自动记录到 `failed_imports` 表
 - 上传文档页「失败重试」Tab（管理员可见）
@@ -248,6 +270,17 @@ C:/Code/Qlipoth/
 | 离线评测体系 | golden set（100 题/50 文档）+ Recall@K/MRR/Precision，复用生产搜索链路 |
 | Claude 模型接入 | Anthropic Messages API 双格式兼容，新增 DeepSeek vs Claude 评测对比 |
 
+### v20260604.1 新增 Feature
+
+| Feature | 说明 |
+|---------|------|
+| 多轮对话上下文 | 追问指代消解（"那市场侧呢"→补全为完整问题）+ 历史回灌，旁路设计不动搜索内核 |
+| 指代消解旁路 | 仅有上文时触发独立廉价 LLM 调用，新会话首轮零开销，单问 golden set 指标无劣化 |
+| 历史滑窗与预算 | 近 3 轮滑窗 + 独立 6000 字预算（与搜索 60K 互不侵占），超限先丢最旧轮、截断标记 |
+| 会话分组侧栏 | 聊天历史按 conversation_id 归组，显示轮次数，可载入续聊；旧记录 legacy 兼容 |
+| OpenSpec 看板 | 管理员专属规范驱动开发面板，展示 specs 能力规范与 changes 变更提案进度 |
+| Markdown 富文本渲染 | marked + DOMPurify 安全渲染，聊天回答与本地文档预览支持富文本，防 XSS/标签劫持 |
+
 ---
 
 ## 6. 重点需求列表
@@ -263,14 +296,16 @@ C:/Code/Qlipoth/
 | P0 | 人设体系（全局视角，先总体后明细） | 已完成 |
 | P0 | 在线文档链接导入（递归 + SSE 进度） | 已完成 |
 | P0 | 聊天历史持久化 | 已完成 |
+| P1 | 多轮对话上下文（指代消解 + 历史回灌） | 已完成 |
 | P1 | 失败记录持久化 + 批量重试 | 已完成 |
 | P1 | 用户管理（角色修改/删除） | 已完成 |
 | P1 | @人名 Owner 提取 | 已完成 |
 | P1 | 引用文档链接（在线+本地） | 已完成 |
 | P1 | 导入历史（父子关系 + 源链接） | 已完成 |
+| P1 | Markdown 富文本渲染（回答 + 文档预览） | 已完成 |
+| P1 | OpenSpec 规范驱动开发看板 | 已完成 |
 | P2 | 企微扫码登录 | 待开发（需企微应用权限） |
 | P2 | 文档分类与标签 | 待开发 |
-| P2 | 多轮对话上下文 | 待开发 |
 
 ---
 <!-- PLACEHOLDER_DEPLOY -->
@@ -410,3 +445,45 @@ filename_hit：文件名含原始关键词 → +2.0；含去尾变体 → +0.8
 - **Claude 排序质量更优**（MRR 0.44→0.47），意图较重的方案类、歧义类提升明显（方案类 Recall 0.6→0.8，歧义类 0.67→0.83），得益于关键词更稳定、更贴合核心实体。
 - **DeepSeek 更快且更稳**（耗时低 ~13%，本轮零失败）。Claude 的 2 次失败为 502 网关抖动，属基础设施而非模型能力。
 - 选型权衡：追求极致排序质量用 Claude，追求速度/成本/稳定用 DeepSeek，二者召回相当。
+
+---
+
+## 10. 多轮对话上下文设计
+
+### 10.1 设计目标与核心约束
+
+支持"那市场侧呢""这个再细化下"式追问，让系统理解指代与省略。**最高优先级约束：单问 golden set 指标绝不劣化。** 离线评测直接调 `generate_search_strategy(question)`，因此**绝不修改** `generate_search_strategy` / `grep_search` / `_select_files` / `MAX_CONTEXT_CHARS` 驱动的上下文构建。新逻辑全部走旁路，缺省/无 conversation_id 时与单问字节级一致。
+
+### 10.2 旁路架构（上游消解 + 下游回灌）
+
+```
+有 conversation_id？
+  ├─ 否（新会话首轮）→ 跳过，resolved_q = question，零额外开销 → 走原单问链路
+  └─ 是 → 载入近 3 轮历史 → 指代消解（独立 LLM）→ resolved_q
+            → generate_search_strategy(resolved_q)  ← 喂消解后问题，下游不变
+            → 搜索/摘录（完全不变）
+            → stream_answer(resolved_q, search_text, history_block)  ← 注入历史
+```
+
+- **上游消解**：`resolve_coreference(history_block, question)` 独立廉价调用（temperature=0），输出 `{is_followup, resolved_question}`。`is_followup=false` 或解析失败 → 回退原问题，下游字节一致。
+- **防过度改写**：prompt 明确"仅当含代词/省略/『那…呢』式追问时才补全，自包含问题原样返回"，补全后保持最小实体词，呼应搜索策略的关键词哲学。
+- **下游回灌**：`stream_answer` 加 `history_block` 参数。空 → 用原 `ANSWER_PROMPT`（回归安全）；非空 → 用 `ANSWER_PROMPT_WITH_HISTORY`，以单条文本块注入历史，仅供语气/连贯，不改消息结构。
+- **为何独立而非折进策略生成**：折进会污染调优过的策略 prompt、有 standalone 召回回归风险。独立 = golden 路径可证明不变，代价仅追问时一次额外串行往返，首轮零成本。
+
+### 10.3 历史滑窗与预算
+
+- 轮次排序用 `id ASC`（`created_at` 秒级字符串，同会话可能同秒碰撞）。
+- 滑窗取最近 **N=3 轮**（一轮 = 一对 Q+A），独立预算 `MAX_HISTORY_CHARS=6000`（**不**从搜索的 60K 里切，避免改动 `per_file_budget` 数学）。
+- `_build_history_block`：超预算先丢最旧轮；单条最新轮仍超则截断答案加 `…(截断)`。纯函数可单测。
+
+### 10.4 数据与接口
+
+- `chat_history` 加 `conversation_id TEXT`（可空，幂等迁移），索引 `idx_chat_conv(conversation_id, id)`。NULL 旧行 = 单轮 standalone，回归安全。
+- **id 由前端生成**（`crypto.randomUUID()`），首次发送前生成，stream 与 save 请求复用同一个，后端只存不透明字符串。
+- 新增 `GET /chat/conversations`（会话分组列表，NULL 行以 `legacy-{id}` 伪会话返回）与 `GET /chat/conversation/{id}`（单会话全部轮次，`id ASC`）。
+- meta 事件附带 `original_question` / `resolved_question` / `is_followup` / `timing_coref` 便于调试。
+
+### 10.5 回归验证
+
+- 改动前后跑同一 golden set（`--tag pre` / `--tag post`）。`generate_search_strategy` 等未动 → 指标变化应仅来自 LLM 非确定性（opus-4-8 temperature=0 仍非确定）。三次同代码复跑的方差（Δ≈0.02）覆盖 pre/post 差异，确认无系统性劣化。
+- 断言 `_build_history_block([]) == ""` 走未改分支；无 conversation_id 请求的 search_text 与回答 prompt 与单问字节一致。
