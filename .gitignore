@@ -9,3 +9,5 @@ backend/knowledge_base/
 backend/.browser_data/
 frontend/node_modules/
 .claude/
+app.db
+*.db

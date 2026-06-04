@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from searcher import grep_search, read_file_content
-from llm import generate_search_strategy, generate_answer, stream_answer
+from llm import generate_search_strategy, generate_answer, stream_answer, resolve_coreference
 from config import load_settings
 from database import DB_PATH
 from datetime import datetime, timezone, timedelta
@@ -22,6 +22,7 @@ def _now_bj() -> str:
 
 class QueryRequest(BaseModel):
     question: str
+    conversation_id: str | None = None
 
 
 class QueryResponse(BaseModel):
@@ -33,6 +34,48 @@ class QueryResponse(BaseModel):
 
 
 MAX_CONTEXT_CHARS = 60000
+
+# 多轮对话历史的独立预算（不从 MAX_CONTEXT_CHARS 切，避免影响 standalone 检索摘录数学）
+MAX_HISTORY_CHARS = 6000
+# 滑窗保留最近 N 轮（一轮 = 一对 Q+A）
+HISTORY_WINDOW_TURNS = 3
+
+
+async def _load_recent_turns(conversation_id: str, limit: int = HISTORY_WINDOW_TURNS) -> list[dict]:
+    """按 conversation_id 取最近 limit 轮，返回由旧到新的 [{question, answer}]。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT question, answer FROM chat_history "
+            "WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
+            (conversation_id, limit),
+        )
+        rows = await cursor.fetchall()
+    turns = [{"question": r["question"], "answer": r["answer"]} for r in rows]
+    turns.reverse()  # 由旧到新
+    return turns
+
+
+def _build_history_block(turns: list[dict]) -> str:
+    """把最近若干轮格式化成对话历史文本块；空列表返回空串（回归安全，走未改分支）。
+
+    超 MAX_HISTORY_CHARS 时先丢最旧轮次；单条最新轮仍超则截断答案。
+    """
+    if not turns:
+        return ""
+    blocks = []
+    for t in turns:
+        q = (t.get("question") or "").strip()
+        a = (t.get("answer") or "").strip()
+        blocks.append(f"用户：{q}\n保障负责人：{a}")
+    # 先丢最旧轮次直到预算内
+    while len(blocks) > 1 and len("\n\n".join(blocks)) > MAX_HISTORY_CHARS:
+        blocks.pop(0)
+    text = "\n\n".join(blocks)
+    # 单条最新轮仍超预算 → 截断
+    if len(text) > MAX_HISTORY_CHARS:
+        text = text[:MAX_HISTORY_CHARS] + "…(截断)"
+    return text
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -320,12 +363,23 @@ async def query_knowledge_base_stream(req: QueryRequest):
 
     t_start = time.perf_counter()
 
+    # 多轮上下文：仅当有 conversation_id 且能载入历史时才做指代消解（首轮/无会话零开销）
+    recent_turns = []
+    if req.conversation_id:
+        recent_turns = await _load_recent_turns(req.conversation_id)
+    history_block = _build_history_block(recent_turns)
+
+    if history_block:
+        resolved_q, is_followup, coref_time = await resolve_coreference(history_block, req.question)
+    else:
+        resolved_q, is_followup, coref_time = req.question, False, 0.0
+
     try:
-        strategy, strategy_llm_time = await generate_search_strategy(req.question)
+        strategy, strategy_llm_time = await generate_search_strategy(resolved_q)
     except RuntimeError as e:
         raise HTTPException(502, f"LLM 搜索策略生成失败: {e}")
 
-    keywords = strategy.get("keywords", [req.question])
+    keywords = strategy.get("keywords", [resolved_q])
     file_pattern = strategy.get("file_pattern", "*")
 
     t0 = time.perf_counter()
@@ -362,7 +416,11 @@ async def query_knowledge_base_stream(req: QueryRequest):
             "sources": sources,
             "source_urls": source_urls,
             "search_strategy": strategy,
+            "original_question": req.question,
+            "resolved_question": resolved_q,
+            "is_followup": is_followup,
             "timing_prep": round(t_prep, 2),
+            "timing_coref": round(coref_time, 2),
             "timing_strategy": round(strategy_llm_time, 2),
             "timing_search": round(t_search, 2),
             "search_results_count": len(results),
@@ -372,7 +430,7 @@ async def query_knowledge_base_stream(req: QueryRequest):
 
         t0 = time.perf_counter()
         try:
-            async for chunk in stream_answer(req.question, search_text):
+            async for chunk in stream_answer(resolved_q, search_text, history_block=history_block):
                 yield f"data: {json.dumps({'type': 'chunk', 'data': chunk}, ensure_ascii=False)}\n\n"
         except RuntimeError as e:
             yield f"data: {json.dumps({'type': 'error', 'data': str(e)}, ensure_ascii=False)}\n\n"
@@ -382,6 +440,7 @@ async def query_knowledge_base_stream(req: QueryRequest):
         t_total = time.perf_counter() - t_start
         timing = {
             "total": round(t_total, 2),
+            "coref": round(coref_time, 2),
             "strategy": round(strategy_llm_time, 2),
             "search": round(t_search, 2),
             "answer": round(t_answer, 2),
@@ -398,6 +457,7 @@ class SaveHistoryRequest(BaseModel):
     answer: str
     source_urls: list[dict] = []
     user_id: int | None = None
+    conversation_id: str | None = None
 
 
 @router.post("/chat/history")
@@ -405,8 +465,8 @@ async def save_chat_history(req: SaveHistoryRequest):
     """Save a Q&A pair to chat history."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO chat_history (user_id, question, answer, source_urls, created_at) VALUES (?, ?, ?, ?, ?)",
-            (req.user_id, req.question, req.answer, json.dumps(req.source_urls, ensure_ascii=False), _now_bj()),
+            "INSERT INTO chat_history (user_id, question, answer, source_urls, conversation_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (req.user_id, req.question, req.answer, json.dumps(req.source_urls, ensure_ascii=False), req.conversation_id, _now_bj()),
         )
         await db.commit()
     return {"message": "saved"}
@@ -426,6 +486,103 @@ async def get_chat_history(user_id: int | None = None, limit: int = 50):
             cursor = await db.execute(
                 "SELECT h.*, u.username as user_name FROM chat_history h LEFT JOIN users u ON h.user_id = u.id ORDER BY h.created_at DESC LIMIT ?",
                 (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "question": row["question"],
+                "answer": row["answer"],
+                "source_urls": json.loads(row["source_urls"]) if row["source_urls"] else [],
+                "created_at": row["created_at"],
+                "user_name": row["user_name"] or "匿名",
+            }
+            for row in rows
+        ]
+
+
+@router.get("/chat/conversations")
+async def list_conversations(user_id: int | None = None, limit: int = 50):
+    """会话分组列表：有 conversation_id 的按会话聚合，历史 NULL 行作为单轮伪会话(legacy-{id})。
+
+    user_id 为 None 时返回全部（admin/super 视角，对齐 get_chat_history 角色过滤）。
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        user_filter = "AND h.user_id = ?" if user_id else ""
+        params: list = [user_id] if user_id else []
+
+        # 1) 分组会话：取每个会话的最新轮 id + 轮数
+        cursor = await db.execute(
+            f"""
+            SELECT conversation_id, COUNT(*) AS turn_count,
+                   MAX(id) AS last_id, MAX(created_at) AS last_time
+            FROM chat_history h
+            WHERE conversation_id IS NOT NULL {user_filter}
+            GROUP BY conversation_id
+            """,
+            params,
+        )
+        groups = await cursor.fetchall()
+
+        items = []
+        for g in groups:
+            row_cur = await db.execute(
+                "SELECT h.question, u.username AS user_name FROM chat_history h "
+                "LEFT JOIN users u ON h.user_id = u.id WHERE h.id = ?",
+                (g["last_id"],),
+            )
+            last = await row_cur.fetchone()
+            items.append({
+                "conversation_id": g["conversation_id"],
+                "turn_count": g["turn_count"],
+                "last_question": last["question"] if last else "",
+                "created_at": g["last_time"],
+                "user_name": (last["user_name"] if last else None) or "匿名",
+            })
+
+        # 2) 历史 NULL 行：每条作为单轮伪会话
+        legacy_cur = await db.execute(
+            f"""
+            SELECT h.id, h.question, h.created_at, u.username AS user_name
+            FROM chat_history h LEFT JOIN users u ON h.user_id = u.id
+            WHERE h.conversation_id IS NULL {user_filter}
+            """,
+            params,
+        )
+        for row in await legacy_cur.fetchall():
+            items.append({
+                "conversation_id": f"legacy-{row['id']}",
+                "turn_count": 1,
+                "last_question": row["question"],
+                "created_at": row["created_at"],
+                "user_name": row["user_name"] or "匿名",
+            })
+
+    items.sort(key=lambda x: x["created_at"] or "", reverse=True)
+    return items[:limit]
+
+
+@router.get("/chat/conversation/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    """单会话全部轮次，按 id ASC（同秒不乱序）。legacy-{id} 为历史单轮伪会话。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if conversation_id.startswith("legacy-"):
+            try:
+                row_id = int(conversation_id.removeprefix("legacy-"))
+            except ValueError:
+                return []
+            cursor = await db.execute(
+                "SELECT h.*, u.username AS user_name FROM chat_history h "
+                "LEFT JOIN users u ON h.user_id = u.id WHERE h.id = ?",
+                (row_id,),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT h.*, u.username AS user_name FROM chat_history h "
+                "LEFT JOIN users u ON h.user_id = u.id WHERE h.conversation_id = ? ORDER BY h.id ASC",
+                (conversation_id,),
             )
         rows = await cursor.fetchall()
         return [
