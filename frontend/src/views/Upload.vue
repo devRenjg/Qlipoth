@@ -178,14 +178,16 @@
         <el-collapse>
           <el-collapse-item v-for="record in importHistory" :key="record.id" :name="record.id">
             <template #title>
-              <span class="history-title">{{ record.root_title }}</span>
-              <el-tag size="small" type="info" style="margin-left: 8px;">{{ record.tree.filter(n => n.stored_as && n.stored_as !== '(已存在)' && !n.error).length }} 个文档</el-tag>
+              <span class="history-title">{{ record.display_title || record.root_title }}</span>
+              <el-tag size="small" type="success" style="margin-left: 8px;">成功 {{ record.counts ? record.counts.success : record.tree.filter(n => n.stored_as && n.stored_as !== '(已存在)' && !n.error).length }}</el-tag>
+              <el-tag v-if="record.counts && record.counts.skipped" size="small" type="warning" style="margin-left: 4px;">跳过 {{ record.counts.skipped }}</el-tag>
+              <el-tag v-if="record.counts && record.counts.failed" size="small" type="danger" style="margin-left: 4px;">失败 {{ record.counts.failed }}</el-tag>
               <span class="history-time">{{ record.imported_at }}</span>
               <el-button
                 size="small"
                 type="danger"
                 text
-                @click.stop="deleteTree(record.id, record.root_title)"
+                @click.stop="deleteTree(record.id, record.display_title || record.root_title)"
                 style="margin-left: 8px;"
               >删除</el-button>
             </template>
