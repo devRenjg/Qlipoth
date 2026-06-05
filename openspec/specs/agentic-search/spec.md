@@ -2,9 +2,7 @@
 
 ## Purpose
 以 Agentic Search（LLM 生成搜索策略 + ripgrep 实时全库搜索 + IDF 覆盖度文件排序 + section 摘录 + LLM 流式整合）替代向量检索，回答用户对知识库的提问，并通过离线评测体系（golden set + Recall/MRR）持续度量与优化搜索质量。
-
 ## Requirements
-
 ### Requirement: LLM 生成搜索策略
 
 系统 SHALL 先调用 LLM 将用户问题转化为搜索策略，输出关键词列表（`keywords`）、文件名匹配模式（`file_pattern`）与是否需要整文（`need_full_file`）。策略 SHALL 拆出最小核心实体词（不带年份/序数前缀），对涉及年份/对比的问题单列年份关键词，对数量类问题补充「总计/统计/合计」等汇总词。
@@ -106,3 +104,47 @@
 
 - **WHEN** 一次评测运行完成
 - **THEN** 系统以 tag + 时间戳生成 md + json 报告落 `eval/reports/`，便于不同排序版本/模型之间 A/B 对照
+
+### Requirement: BM25 + RRF 旁路重排
+
+系统 SHALL 在 IDF 覆盖度文件排序之后，以零依赖的 char-bigram BM25（Okapi，k1=1.5/b=0.75）对候选文件重新打分，并用 RRF（k=60）将 BM25 排序与既有 grep/IDF 排序融合，提升召回。融合 SHALL 为旁路设计：当 BM25 不可用、异常或返回空时，系统 SHALL 回退到既有 `_select_files` 顺序，保证缺省零回归。被 BM25 召回但无 grep 命中行的文件，系统 SHALL 读取其开头若干预算字符以兑现召回增益。
+
+#### Scenario: BM25/RRF 融合提升召回
+
+- **WHEN** 候选文件经 IDF 覆盖度排序后进入 BM25 + RRF 融合
+- **THEN** 系统输出融合后的文件顺序，使字面/词频相关但 IDF 排序靠后的文档有机会进入上下文
+
+#### Scenario: BM25 异常时回退零回归
+
+- **WHEN** BM25 模块不可用、抛异常或返回空结果
+- **THEN** 系统回退到既有 `_select_files` 顺序，文件选择与未启用融合时完全一致
+
+#### Scenario: 召回文件无命中行时读开头
+
+- **WHEN** 某文件由 BM25 召回但在 grep 结果中无命中行
+- **THEN** 系统读取该文件开头的预算字符纳入上下文，避免丢失召回增益
+
+### Requirement: 相关图片画廊
+
+系统 SHALL 从入选 LLM 上下文的 top 相关文档正文中抽取干净的内容图 URL，去重后随查询响应与 SSE `meta` 事件以 `relevant_images` 字段下发，供前端在答案旁展示相关图片。抽取 SHALL 仅识别已知图床的内容图（带类型参数或显式图片扩展名的 URL），以排除头像与解码残片乱码。抽取 SHALL 限制单篇文档与总计的图片数量以保证跨文档多样性。该抽取 SHALL 为旁路副作用：不改变喂给 LLM 的上下文文本、文件排序与回答内容。
+
+#### Scenario: 答案带出相关图片
+
+- **WHEN** 用户查询命中的 top 相关文档正文含已知图床的内容图
+- **THEN** 系统在响应 / `meta` 的 `relevant_images` 中返回去重后的图片 URL 及其来源文档标题，前端在答案下方渲染缩略图画廊
+
+#### Scenario: 排除头像与乱码
+
+- **WHEN** 文档正文含头像 URL 或 protobuf 解码残片中的非图片乱码
+- **THEN** 抽取仅保留带 `type=image/` 参数或显式图片扩展名的内容图 URL，不纳入头像与乱码片段
+
+#### Scenario: 单篇限额保证多样性
+
+- **WHEN** 某一图多文档被选为最相关来源
+- **THEN** 抽取对该文档施加单篇图片数上限，使画廊覆盖多个来源文档而非被单篇独占
+
+#### Scenario: 抽图不影响回答
+
+- **WHEN** 启用相关图片抽取
+- **THEN** 喂给 LLM 的上下文文本、文件排序与离线评测结果与未启用时一致，图片仅经独立的 `relevant_images` 字段旁路下发
+

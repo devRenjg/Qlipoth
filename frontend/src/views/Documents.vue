@@ -23,7 +23,7 @@
       <el-table-column prop="original_name" label="文件名" />
       <el-table-column label="标签" width="220">
         <template #default="{ row }">
-          <el-tag v-for="t in row.tags" :key="t.id" size="small" class="doc-tag">{{ t.name }}</el-tag>
+          <span v-for="t in row.tags" :key="t.id" class="doc-tag" :style="tagChipStyle(t.name)">{{ t.name }}</span>
           <span v-if="!row.tags.length" class="no-tag">—</span>
         </template>
       </el-table-column>
@@ -119,6 +119,7 @@ import {
   getTags, createTag, renameTag, deleteTag, setDocumentTags,
 } from '../api/index.js'
 import { renderMarkdown } from '../utils/markdown.js'
+import { tagChipStyle } from '../utils/tagColor.js'
 import 'github-markdown-css/github-markdown-light.css'
 
 const currentUser = inject('currentUser')
@@ -289,7 +290,18 @@ function formatSize(bytes) {
 .header-controls { display: flex; gap: 10px; align-items: center; }
 .doc-count { font-size: 14px; font-weight: normal; color: #909399; margin-left: 8px; }
 .doc-content { max-height: 65vh; overflow-y: auto; padding: 16px; font-size: 14px; }
-.doc-tag { margin-right: 4px; margin-bottom: 2px; }
+.doc-content :deep(img) { max-width: 100%; height: auto; border: 1px solid #ebeef5; border-radius: 4px; margin: 8px 0; display: block; }
+.doc-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  margin-right: 4px;
+  margin-bottom: 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid transparent;
+  border-radius: 12px;
+}
 .no-tag { color: #c0c4cc; }
 .tag-create-row { display: flex; gap: 10px; margin-bottom: 16px; }
 .tag-desc { font-size: 13px; color: #606266; white-space: pre-wrap; word-break: break-word; }

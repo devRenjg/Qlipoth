@@ -41,11 +41,45 @@ class QueryResponse(BaseModel):
     answer: str
     sources: list[dict]
     source_urls: list[dict] = []
+    relevant_images: list[dict] = []
     search_strategy: dict
     timing: dict
 
 
 MAX_CONTEXT_CHARS = 60000
+
+# 相关图片（方案A 画廊）：从被选入上下文的正文里收干净内容图，按相关文件位置关联。
+# 正则与前端 utils/markdown.js 的 IMG_PATTERNS 对齐：仅识别已知图床内容图，
+# 用干净边界（?w=&h=&type=image/ 或显式扩展名）砍掉 protobuf 残片乱码尾巴。
+MAX_RELEVANT_IMAGES = 8
+MAX_IMAGES_PER_FILE = 4  # 单文档限额，避免一篇图多文档独占画廊，保证跨文档多样性
+_IMG_PATTERNS = [
+    re.compile(r'https?://[\w.-]*qpic\.cn/[\w%./~-]+\?w=\d+&h=\d+&type=image/[a-z]+', re.I),
+    re.compile(
+        r'https?://(?:[\w-]+\.)?(?:qpic\.cn|gtimg\.cn|example\.com)'
+        r'/[\w%./~-]+\.(?:png|jpe?g|gif|webp|bmp)(?:@[\w_]+)?',
+        re.I,
+    ),
+]
+
+
+def _collect_images_into(text: str, file: str, images: list[dict], seen: set[str], limit: int) -> None:
+    """从一个被选为 top-N 相关的文档正文里抽干净内容图，去重后追加到 images（至多 limit 张）。
+
+    相关性信号是文件级：这些文件正是文字答案的来源（BM25+RRF top-N），其内容图即相关图。
+    比段落级位置关联召回高得多——图片 URL 极少恰好落在命中行 ±20 的摘录窗口内。
+    """
+    title = file.replace(".md", "")
+    added = 0
+    for pat in _IMG_PATTERNS:
+        for m in pat.finditer(text):
+            if added >= limit:
+                return
+            url = m.group(0)
+            if url not in seen:
+                seen.add(url)
+                images.append({"url": url, "file": file, "title": title})
+                added += 1
 
 # 多轮对话历史的独立预算（不从 MAX_CONTEXT_CHARS 切，避免影响 standalone 检索摘录数学）
 MAX_HISTORY_CHARS = 6000
@@ -117,11 +151,13 @@ def _filter_results_by_paths(results: "SearchResults", allowed: set[str]) -> "Se
     return filtered
 
 
-def _assemble_context(results: list, question: str) -> tuple[str, list[str]]:
-    """选文件(grep+IDF) → BM25-RRF 旁路融合 → 拼接上下文。返回 (search_text, files_to_read)。
+def _assemble_context(results: list, question: str) -> tuple[str, list[str], list[dict]]:
+    """选文件(grep+IDF) → BM25-RRF 旁路融合 → 拼接上下文。
+    返回 (search_text, files_to_read, relevant_images)。
 
     融合见 bm25.fuse_select：异常/不可用时等价于原 _select_files 顺序，零回归。
     被 BM25 捞回但无 grep 命中行的文件，读其开头(per_file_budget)以兑现召回增益。
+    relevant_images：从真正进入上下文的 chunk 里抽的干净内容图（方案A 画廊用）。
     """
     baseline_files = _select_files(results)
     try:
@@ -130,10 +166,12 @@ def _assemble_context(results: list, question: str) -> tuple[str, list[str]]:
     except Exception:  # noqa: BLE001
         files_to_read = baseline_files
     if not files_to_read:
-        return "未找到相关内容。", []
+        return "未找到相关内容。", [], []
 
     parts = []
     total_chars = 0
+    images: list[dict] = []
+    seen_img: set[str] = set()
     per_file_budget = MAX_CONTEXT_CHARS // min(len(files_to_read), 10)
     for f in files_to_read:
         content = read_file_content(f)
@@ -152,7 +190,10 @@ def _assemble_context(results: list, question: str) -> tuple[str, list[str]]:
             break
         parts.append(chunk)
         total_chars += len(chunk)
-    return "\n".join(parts), files_to_read
+        if len(images) < MAX_RELEVANT_IMAGES:
+            # 从整篇正文抽图（而非摘录片段）：文件已被选为 top 相关，其内容图即相关图
+            _collect_images_into(content, f, images, seen_img, MAX_IMAGES_PER_FILE)
+    return "\n".join(parts), files_to_read, images[:MAX_RELEVANT_IMAGES]
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -182,9 +223,9 @@ async def query_knowledge_base(req: QueryRequest):
 
     t0 = time.perf_counter()
     if results:
-        search_text, files_to_read = _assemble_context(results, req.question)
+        search_text, files_to_read, relevant_images = _assemble_context(results, req.question)
     else:
-        search_text, files_to_read = "未找到相关内容。", []
+        search_text, files_to_read, relevant_images = "未找到相关内容。", [], []
     t_extract = time.perf_counter() - t0
 
     try:
@@ -211,7 +252,7 @@ async def query_knowledge_base(req: QueryRequest):
         "context_chars": len(search_text),
     }
 
-    return QueryResponse(answer=answer, sources=sources, source_urls=source_urls, search_strategy=strategy, timing=timing)
+    return QueryResponse(answer=answer, sources=sources, source_urls=source_urls, relevant_images=relevant_images, search_strategy=strategy, timing=timing)
 
 
 def _extract_source_urls(files: list[str]) -> list[dict]:
@@ -454,9 +495,9 @@ async def query_knowledge_base_stream(req: QueryRequest):
     t_search = time.perf_counter() - t0
 
     if results:
-        search_text, files_to_read = _assemble_context(results, resolved_q)
+        search_text, files_to_read, relevant_images = _assemble_context(results, resolved_q)
     else:
-        search_text, files_to_read = "未找到相关内容。", []
+        search_text, files_to_read, relevant_images = "未找到相关内容。", [], []
 
     sources = [{"file": r.file, "line": r.line_number, "content": r.content} for r in results[:10]]
     source_urls = _extract_source_urls(files_to_read if results else [])
@@ -466,6 +507,7 @@ async def query_knowledge_base_stream(req: QueryRequest):
         meta = {
             "sources": sources,
             "source_urls": source_urls,
+            "relevant_images": relevant_images,
             "search_strategy": strategy,
             "original_question": req.question,
             "resolved_question": resolved_q,
