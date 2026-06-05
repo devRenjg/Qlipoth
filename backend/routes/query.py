@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from searcher import grep_search, read_file_content, SearchResults
 from llm import generate_search_strategy, generate_answer, stream_answer, resolve_coreference
 from config import load_settings
+from question_router import route_model
 from database import DB_PATH
 from datetime import datetime, timezone, timedelta
 import aiosqlite
@@ -230,7 +231,8 @@ async def query_knowledge_base(req: QueryRequest):
 
     try:
         t0 = time.perf_counter()
-        answer, answer_llm_time = await generate_answer(req.question, search_text)
+        answer_model, q_type = route_model(req.question, settings.llm_model, settings.llm_model_fast)
+        answer, answer_llm_time = await generate_answer(req.question, search_text, model=answer_model)
         t_answer = time.perf_counter() - t0
     except RuntimeError as e:
         raise HTTPException(502, f"LLM 回答生成失败: {e}")
@@ -248,6 +250,8 @@ async def query_knowledge_base(req: QueryRequest):
         "extract": round(t_extract, 2),
         "answer": round(t_answer, 2),
         "answer_llm": round(answer_llm_time, 2),
+        "answer_model": answer_model,
+        "question_type": q_type,
         "search_results_count": len(results),
         "context_chars": len(search_text),
     }
@@ -503,6 +507,8 @@ async def query_knowledge_base_stream(req: QueryRequest):
     source_urls = _extract_source_urls(files_to_read if results else [])
     t_prep = time.perf_counter() - t_start
 
+    answer_model, q_type = route_model(resolved_q, settings.llm_model, settings.llm_model_fast)
+
     async def event_generator():
         meta = {
             "sources": sources,
@@ -512,6 +518,8 @@ async def query_knowledge_base_stream(req: QueryRequest):
             "original_question": req.question,
             "resolved_question": resolved_q,
             "is_followup": is_followup,
+            "answer_model": answer_model,
+            "question_type": q_type,
             "timing_prep": round(t_prep, 2),
             "timing_coref": round(coref_time, 2),
             "timing_strategy": round(strategy_llm_time, 2),
@@ -523,7 +531,7 @@ async def query_knowledge_base_stream(req: QueryRequest):
 
         t0 = time.perf_counter()
         try:
-            async for chunk in stream_answer(resolved_q, search_text, history_block=history_block):
+            async for chunk in stream_answer(resolved_q, search_text, history_block=history_block, model=answer_model):
                 yield f"data: {json.dumps({'type': 'chunk', 'data': chunk}, ensure_ascii=False)}\n\n"
         except RuntimeError as e:
             yield f"data: {json.dumps({'type': 'error', 'data': str(e)}, ensure_ascii=False)}\n\n"
