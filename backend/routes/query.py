@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from searcher import grep_search, read_file_content
+from searcher import grep_search, read_file_content, SearchResults
 from llm import generate_search_strategy, generate_answer, stream_answer, resolve_coreference
 from config import load_settings
 from database import DB_PATH
@@ -20,9 +20,21 @@ def _now_bj() -> str:
     return datetime.now(_BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _parse_tags(raw) -> list[dict]:
+    """安全解析 chat_history.selected_tags（JSON 文本）→ [{id,name}]，旧行/空值返回 []。"""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
 class QueryRequest(BaseModel):
     question: str
     conversation_id: str | None = None
+    tag_ids: list[int] = []
 
 
 class QueryResponse(BaseModel):
@@ -78,6 +90,71 @@ def _build_history_block(turns: list[dict]) -> str:
     return text
 
 
+async def _tagged_stored_paths(tag_ids: list[int]) -> set[str]:
+    """返回带有任一所选标签的文档 stored_path 集合（OR 语义，与文档管理页筛选一致）。
+
+    tag_ids 为空时返回空集；调用方据此跳过过滤（零回归：不选标签时行为不变）。
+    """
+    if not tag_ids:
+        return set()
+    placeholders = ",".join("?" for _ in tag_ids)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            f"SELECT DISTINCT d.stored_path FROM documents d "
+            f"JOIN document_tags dt ON d.id = dt.document_id "
+            f"WHERE dt.tag_id IN ({placeholders})",
+            tuple(tag_ids),
+        )
+        rows = await cursor.fetchall()
+    return {r[0] for r in rows}
+
+
+def _filter_results_by_paths(results: "SearchResults", allowed: set[str]) -> "SearchResults":
+    """把 grep 结果裁剪到 allowed 路径集合内，保留 SearchResults 的排序元数据。"""
+    filtered = SearchResults(r for r in results if r.file in allowed)
+    filtered.original_keywords = getattr(results, "original_keywords", [])
+    filtered.keyword_df = getattr(results, "keyword_df", {})
+    return filtered
+
+
+def _assemble_context(results: list, question: str) -> tuple[str, list[str]]:
+    """选文件(grep+IDF) → BM25-RRF 旁路融合 → 拼接上下文。返回 (search_text, files_to_read)。
+
+    融合见 bm25.fuse_select：异常/不可用时等价于原 _select_files 顺序，零回归。
+    被 BM25 捞回但无 grep 命中行的文件，读其开头(per_file_budget)以兑现召回增益。
+    """
+    baseline_files = _select_files(results)
+    try:
+        from bm25 import fuse_select
+        files_to_read = fuse_select(baseline_files, question)
+    except Exception:  # noqa: BLE001
+        files_to_read = baseline_files
+    if not files_to_read:
+        return "未找到相关内容。", []
+
+    parts = []
+    total_chars = 0
+    per_file_budget = MAX_CONTEXT_CHARS // min(len(files_to_read), 10)
+    for f in files_to_read:
+        content = read_file_content(f)
+        if not content:
+            continue
+        file_results = [r for r in results if r.file == f]
+        if len(content) <= per_file_budget:
+            chunk = f"=== 文件: {f} ===\n{content}\n"
+        elif file_results:
+            excerpts = _extract_relevant_sections(content, file_results, budget=per_file_budget)
+            chunk = f"=== 文件: {f} (摘录) ===\n{excerpts}\n"
+        else:
+            # BM25 捞回但无 grep 命中行：读开头兜底，不丢召回增益
+            chunk = f"=== 文件: {f} (摘录) ===\n{content[:per_file_budget]}\n"
+        if total_chars + len(chunk) > MAX_CONTEXT_CHARS:
+            break
+        parts.append(chunk)
+        total_chars += len(chunk)
+    return "\n".join(parts), files_to_read
+
+
 @router.post("/query", response_model=QueryResponse)
 async def query_knowledge_base(req: QueryRequest):
     t_start = time.perf_counter()
@@ -98,29 +175,16 @@ async def query_knowledge_base(req: QueryRequest):
 
     t0 = time.perf_counter()
     results = grep_search(keywords, file_pattern)
+    if req.tag_ids:
+        allowed = await _tagged_stored_paths(req.tag_ids)
+        results = _filter_results_by_paths(results, allowed)
     t_search = time.perf_counter() - t0
 
     t0 = time.perf_counter()
     if results:
-        files_to_read = _select_files(results)
-        search_text_parts = []
-        total_chars = 0
-        per_file_budget = MAX_CONTEXT_CHARS // min(len(files_to_read), 10)
-        for f in files_to_read:
-            content = read_file_content(f)
-            if len(content) <= per_file_budget:
-                chunk = f"=== 文件: {f} ===\n{content}\n"
-            else:
-                file_results = [r for r in results if r.file == f]
-                excerpts = _extract_relevant_sections(content, file_results, budget=per_file_budget)
-                chunk = f"=== 文件: {f} (摘录) ===\n{excerpts}\n"
-            if total_chars + len(chunk) > MAX_CONTEXT_CHARS:
-                break
-            search_text_parts.append(chunk)
-            total_chars += len(chunk)
-        search_text = "\n".join(search_text_parts)
+        search_text, files_to_read = _assemble_context(results, req.question)
     else:
-        search_text = "未找到相关内容。"
+        search_text, files_to_read = "未找到相关内容。", []
     t_extract = time.perf_counter() - t0
 
     try:
@@ -384,28 +448,15 @@ async def query_knowledge_base_stream(req: QueryRequest):
 
     t0 = time.perf_counter()
     results = grep_search(keywords, file_pattern)
+    if req.tag_ids:
+        allowed = await _tagged_stored_paths(req.tag_ids)
+        results = _filter_results_by_paths(results, allowed)
     t_search = time.perf_counter() - t0
 
     if results:
-        files_to_read = _select_files(results)
-        search_text_parts = []
-        total_chars = 0
-        per_file_budget = MAX_CONTEXT_CHARS // min(len(files_to_read), 10)
-        for f in files_to_read:
-            content = read_file_content(f)
-            if len(content) <= per_file_budget:
-                chunk = f"=== 文件: {f} ===\n{content}\n"
-            else:
-                file_results = [r for r in results if r.file == f]
-                excerpts = _extract_relevant_sections(content, file_results, budget=per_file_budget)
-                chunk = f"=== 文件: {f} (摘录) ===\n{excerpts}\n"
-            if total_chars + len(chunk) > MAX_CONTEXT_CHARS:
-                break
-            search_text_parts.append(chunk)
-            total_chars += len(chunk)
-        search_text = "\n".join(search_text_parts)
+        search_text, files_to_read = _assemble_context(results, resolved_q)
     else:
-        search_text = "未找到相关内容。"
+        search_text, files_to_read = "未找到相关内容。", []
 
     sources = [{"file": r.file, "line": r.line_number, "content": r.content} for r in results[:10]]
     source_urls = _extract_source_urls(files_to_read if results else [])
@@ -458,6 +509,7 @@ class SaveHistoryRequest(BaseModel):
     source_urls: list[dict] = []
     user_id: int | None = None
     conversation_id: str | None = None
+    selected_tags: list[dict] = []
 
 
 @router.post("/chat/history")
@@ -465,8 +517,16 @@ async def save_chat_history(req: SaveHistoryRequest):
     """Save a Q&A pair to chat history."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO chat_history (user_id, question, answer, source_urls, conversation_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (req.user_id, req.question, req.answer, json.dumps(req.source_urls, ensure_ascii=False), req.conversation_id, _now_bj()),
+            "INSERT INTO chat_history (user_id, question, answer, source_urls, conversation_id, selected_tags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                req.user_id,
+                req.question,
+                req.answer,
+                json.dumps(req.source_urls, ensure_ascii=False),
+                req.conversation_id,
+                json.dumps(req.selected_tags, ensure_ascii=False) if req.selected_tags else None,
+                _now_bj(),
+            ),
         )
         await db.commit()
     return {"message": "saved"}
@@ -494,6 +554,7 @@ async def get_chat_history(user_id: int | None = None, limit: int = 50):
                 "question": row["question"],
                 "answer": row["answer"],
                 "source_urls": json.loads(row["source_urls"]) if row["source_urls"] else [],
+                "selected_tags": _parse_tags(row["selected_tags"]),
                 "created_at": row["created_at"],
                 "user_name": row["user_name"] or "匿名",
             }
@@ -512,11 +573,12 @@ async def list_conversations(user_id: int | None = None, limit: int = 50):
         user_filter = "AND h.user_id = ?" if user_id else ""
         params: list = [user_id] if user_id else []
 
-        # 1) 分组会话：取每个会话的最新轮 id + 轮数
+        # 1) 分组会话：取每个会话的最新轮 id + 轮数 + 是否用过标签
         cursor = await db.execute(
             f"""
             SELECT conversation_id, COUNT(*) AS turn_count,
-                   MAX(id) AS last_id, MAX(created_at) AS last_time
+                   MAX(id) AS last_id, MAX(created_at) AS last_time,
+                   MAX(CASE WHEN selected_tags IS NOT NULL THEN 1 ELSE 0 END) AS has_tags
             FROM chat_history h
             WHERE conversation_id IS NOT NULL {user_filter}
             GROUP BY conversation_id
@@ -528,7 +590,7 @@ async def list_conversations(user_id: int | None = None, limit: int = 50):
         items = []
         for g in groups:
             row_cur = await db.execute(
-                "SELECT h.question, u.username AS user_name FROM chat_history h "
+                "SELECT h.question, h.selected_tags, u.username AS user_name FROM chat_history h "
                 "LEFT JOIN users u ON h.user_id = u.id WHERE h.id = ?",
                 (g["last_id"],),
             )
@@ -539,24 +601,29 @@ async def list_conversations(user_id: int | None = None, limit: int = 50):
                 "last_question": last["question"] if last else "",
                 "created_at": g["last_time"],
                 "user_name": (last["user_name"] if last else None) or "匿名",
+                "has_tags": bool(g["has_tags"]),
+                "selected_tags": _parse_tags(last["selected_tags"]) if last else [],
             })
 
         # 2) 历史 NULL 行：每条作为单轮伪会话
         legacy_cur = await db.execute(
             f"""
-            SELECT h.id, h.question, h.created_at, u.username AS user_name
+            SELECT h.id, h.question, h.created_at, h.selected_tags, u.username AS user_name
             FROM chat_history h LEFT JOIN users u ON h.user_id = u.id
             WHERE h.conversation_id IS NULL {user_filter}
             """,
             params,
         )
         for row in await legacy_cur.fetchall():
+            tags = _parse_tags(row["selected_tags"])
             items.append({
                 "conversation_id": f"legacy-{row['id']}",
                 "turn_count": 1,
                 "last_question": row["question"],
                 "created_at": row["created_at"],
                 "user_name": row["user_name"] or "匿名",
+                "has_tags": bool(tags),
+                "selected_tags": tags,
             })
 
     items.sort(key=lambda x: x["created_at"] or "", reverse=True)
@@ -591,6 +658,7 @@ async def get_conversation(conversation_id: str):
                 "question": row["question"],
                 "answer": row["answer"],
                 "source_urls": json.loads(row["source_urls"]) if row["source_urls"] else [],
+                "selected_tags": _parse_tags(row["selected_tags"]),
                 "created_at": row["created_at"],
                 "user_name": row["user_name"] or "匿名",
             }

@@ -6,10 +6,25 @@
     <el-tabs v-model="activeTab" class="upload-tabs">
       <el-tab-pane label="文件上传" name="file">
         <p class="tab-desc">支持 Word (.docx)、Excel (.xlsx)、PPT (.pptx)、PDF (.pdf)、Markdown (.md)、文本 (.txt) 格式</p>
+        <div class="tag-input-row">
+          <span class="tag-input-label">标签（选填）：</span>
+          <el-select
+            v-model="uploadTags"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            placeholder="选填，留空则上传后自动按内容打标"
+            class="tag-select"
+          >
+            <el-option v-for="t in allTags" :key="t.id" :label="t.name" :value="t.name" />
+          </el-select>
+        </div>
         <el-upload
           class="uploader"
           drag
           action="/api/upload"
+          :data="{ tags: JSON.stringify(uploadTags) }"
           :on-success="onSuccess"
           :on-error="onError"
           :before-upload="beforeUpload"
@@ -19,7 +34,7 @@
           <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
           <div class="el-upload__text">拖拽文件到此处，或 <em>点击上传</em></div>
           <template #tip>
-            <div class="el-upload__tip">文件将被转换为文本格式存储到知识库中</div>
+            <div class="el-upload__tip">文件将被转换为文本格式存储到知识库中；未填标签时系统会自动按内容打标</div>
           </template>
         </el-upload>
       </el-tab-pane>
@@ -48,6 +63,21 @@
               controls-position="right"
             />
             <span class="depth-hint">（0 = 仅当前文档，最多 3 层）</span>
+          </div>
+          <div class="tag-input-row url-tag-row">
+            <span class="tag-input-label">标签（选填）：</span>
+            <el-select
+              v-model="urlTags"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              placeholder="选填，留空则导入后自动按内容打标（仅作用于根文档）"
+              class="tag-select"
+              :disabled="importing"
+            >
+              <el-option v-for="t in allTags" :key="t.id" :label="t.name" :value="t.name" />
+            </el-select>
           </div>
           <el-button
             type="primary"
@@ -190,6 +220,7 @@ import { ref, inject, computed, onMounted } from 'vue'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
+import { getTags } from '../api'
 
 const currentUser = inject('currentUser')
 
@@ -198,6 +229,9 @@ const uploadResults = ref([])
 const docUrl = ref('')
 const importing = ref(false)
 const maxDepth = ref(2)
+const uploadTags = ref([])
+const urlTags = ref([])
+const allTags = ref([])
 const importTree = ref([])
 const importHistory = ref([])
 const loadingHistory = ref(false)
@@ -233,6 +267,7 @@ function onSuccess(response, file) {
   })
   ElMessage.success(`${file.name} 上传成功`)
   loadHistory()
+  loadTags()
 }
 
 function onError(err, file) {
@@ -256,7 +291,7 @@ async function importFromUrl() {
   importTree.value = []
 
   const url = docUrl.value.trim()
-  const body = JSON.stringify({ url, max_depth: maxDepth.value })
+  const body = JSON.stringify({ url, max_depth: maxDepth.value, tags: urlTags.value })
 
   try {
     const resp = await fetch('/api/upload/url/stream', {
@@ -301,6 +336,7 @@ async function importFromUrl() {
             ElMessage.success(`导入完成：成功 ${d.success} 个${d.failed ? `，失败 ${d.failed} 个` : ''}${d.skipped ? `，跳过 ${d.skipped} 个` : ''}`)
             docUrl.value = ''
             loadHistory()
+            loadTags()
           } else if (msg.type === 'error') {
             ElMessage.error(msg.data.error || '导入失败')
           }
@@ -352,7 +388,15 @@ async function deleteTree(id, title) {
 onMounted(() => {
   loadHistory()
   loadFailedImports()
+  loadTags()
 })
+
+async function loadTags() {
+  try {
+    const { data } = await getTags()
+    allTags.value = data
+  } catch {}
+}
 
 async function loadFailedImports() {
   loadingFailed.value = true
@@ -460,6 +504,10 @@ function updateFailedReason(id, reason) {
 .desc { color: #909399; margin-bottom: 24px; }
 .tab-desc { color: #909399; margin-bottom: 16px; font-size: 14px; }
 .upload-tabs { margin-bottom: 32px; }
+.tag-input-row { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+.url-tag-row { margin-top: 12px; max-width: 700px; }
+.tag-input-label { font-size: 14px; color: #606266; white-space: nowrap; }
+.tag-select { flex: 1; min-width: 240px; }
 .uploader { margin-bottom: 16px; }
 .url-import { max-width: 700px; }
 .import-options { margin-top: 12px; display: flex; align-items: center; gap: 8px; }

@@ -1,4 +1,5 @@
 import re
+import json
 import base64
 import zlib
 from pathlib import Path
@@ -11,7 +12,7 @@ ALLOWED_HOSTS = {
     "doc.weixin.qq.com", "sheet.weixin.qq.com",
 }
 
-BROWSER_DATA_DIR = Path(__file__).parent / ".browser_data"
+BROWSER_DATA_DIR = Path(__file__).parent.parent / ".browser_data"
 CHROME_PATH = "C:/Program Files/Google/Chrome/Application/chrome.exe"
 
 
@@ -21,6 +22,29 @@ def validate_tencent_doc_url(url: str) -> bool:
         return parsed.scheme in ("http", "https") and parsed.hostname in ALLOWED_HOSTS
     except Exception:
         return False
+
+
+async def _wait_for_content(page, max_wait_ms: int = 15000) -> None:
+    """Wait for doc body to finish loading.
+
+    The opendoc API can return before the editor renders ("内容加载中..."); a fixed
+    sleep is either too short (slow docs fail) or wasteful. Poll the body text and
+    stop early once the loading placeholder disappears and real content appears.
+    """
+    step = 1000
+    waited = 0
+    # minimum settle so late XHR (sheet/mind) gets captured
+    await page.wait_for_timeout(3000)
+    waited += 3000
+    while waited < max_wait_ms:
+        try:
+            body = await page.inner_text("body")
+        except Exception:
+            body = ""
+        if "内容加载中" not in body and len(body) > 80:
+            return
+        await page.wait_for_timeout(step)
+        waited += step
 
 
 async def scrape_tencent_doc(url: str, timeout_ms: int = 60000) -> tuple[str, str]:
@@ -52,6 +76,11 @@ async def scrape_tencent_doc(url: str, timeout_ms: int = 60000) -> tuple[str, st
                         captured["sheet"] = await response.json()
                     except Exception:
                         pass
+                elif "dop-api/mind/data/get" in resp_url:
+                    try:
+                        captured["mind"] = await response.json()
+                    except Exception:
+                        pass
                 elif "dop-api/opendoc" in resp_url:
                     try:
                         captured["doc"] = await response.json()
@@ -61,9 +90,9 @@ async def scrape_tencent_doc(url: str, timeout_ms: int = 60000) -> tuple[str, st
             page.on("response", on_response)
 
             await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
-            await page.wait_for_timeout(8000)
+            await _wait_for_content(page)
 
-            data = captured.get("sheet") or captured.get("doc")
+            data = captured.get("sheet") or captured.get("mind") or captured.get("doc")
 
             if data is None:
                 body_text = await page.inner_text("body")
@@ -74,6 +103,11 @@ async def scrape_tencent_doc(url: str, timeout_ms: int = 60000) -> tuple[str, st
                 raise RuntimeError("未能拦截到文档数据接口，请确认链接可正常访问")
 
             title = _extract_title(data)
+            if not title or title == "未命名文档":
+                if captured.get("doc"):
+                    alt = _extract_title(captured["doc"])
+                    if alt and alt != "未命名文档":
+                        title = alt
             if not title or title == "未命名文档":
                 page_title = await page.title()
                 page_title = re.sub(r"\s*[-|–—]\s*(腾讯文档|企业微信).*$", "", page_title).strip()
@@ -100,17 +134,43 @@ def _extract_title(data: dict) -> str:
     cv = data.get("clientVars", {})
     title = cv.get("padTitle", "") or cv.get("title", "")
     if not title:
+        title = cv.get("initialTitle", "")
+    if not title:
         body_data = data.get("bodyData", {})
         title = body_data.get("pageTitle", "")
     if not title:
         # Sheet format: title might be in the HTML page data
         html_data = data.get("htmlData", {})
         title = html_data.get("title", "")
+    if not title:
+        # Mind format: title sits on the root topic inside fileData
+        d = data.get("data", data)
+        mcv = d.get("collab_client_vars", {})
+        file_data = mcv.get("fileData")
+        if isinstance(file_data, str) and file_data:
+            try:
+                fd = json.loads(file_data)
+                content = fd.get("content", [])
+                if content:
+                    title = content[0].get("rootTopic", {}).get("title", "")
+            except (json.JSONDecodeError, TypeError):
+                pass
     return title.strip() or "未命名文档"
 
 
 def _extract_text_from_response(data: dict) -> str:
     """Extract text from the opendoc/sheet API response, preserving links and images."""
+    # Mind (思维导图): data.collab_client_vars.fileData holds a JSON topic tree.
+    mind_text = _extract_mind_text(data)
+    if mind_text:
+        return mind_text
+
+    # Smartsheet (智能表格): data.initialAttributedText.text[0].smartsheet holds
+    # b64+zlib-compressed JSON of records.
+    smart_text = _extract_smartsheet_text(data)
+    if smart_text:
+        return smart_text
+
     # Try doc format: clientVars.collab_client_vars.initialAttributedText
     try:
         cv = data.get("clientVars", {})
@@ -157,6 +217,117 @@ def _extract_text_from_response(data: dict) -> str:
         pass
 
     return ""
+
+
+def _extract_mind_text(data: dict) -> str:
+    """Extract a mind-map (思维导图) topic tree into indented markdown.
+
+    Structure: data.collab_client_vars.fileData (JSON string) ->
+        content[0].rootTopic { title, children.attached[ {title, children...} ] }
+    """
+    d = data.get("data", data)
+    cv = d.get("collab_client_vars", {})
+    if d.get("padType") != "mind" and not cv.get("fileData"):
+        return ""
+    file_data = cv.get("fileData")
+    if not isinstance(file_data, str) or not file_data:
+        return ""
+    try:
+        fd = json.loads(file_data)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+
+    content = fd.get("content", [])
+    if not content:
+        return ""
+
+    lines: list[str] = []
+
+    def _coerce_title(val) -> str:
+        """A mind title is usually a plain str, but can be a rich-text dict
+        like {"children": [{"type": "paragraph", "children": [{"text": "..."}]}]}.
+        Recursively collect all nested "text" fragments."""
+        if isinstance(val, str):
+            return val.strip()
+        if isinstance(val, dict):
+            parts: list[str] = []
+
+            def _collect(node):
+                if isinstance(node, dict):
+                    t = node.get("text")
+                    if isinstance(t, str):
+                        parts.append(t)
+                    for child in node.get("children", []) or []:
+                        _collect(child)
+                elif isinstance(node, list):
+                    for child in node:
+                        _collect(child)
+
+            _collect(val)
+            return "".join(parts).strip()
+        return ""
+
+    def _walk(topic: dict, depth: int):
+        title = _coerce_title(topic.get("title"))
+        if title:
+            lines.append(("  " * depth) + "- " + title)
+        children = topic.get("children", {})
+        attached = children.get("attached", []) if isinstance(children, dict) else []
+        for child in attached:
+            _walk(child, depth + 1)
+
+    for node in content:
+        root = node.get("rootTopic")
+        if root:
+            _walk(root, 0)
+
+    text = "\n".join(lines).strip()
+    return _convert_hyperlinks(text) if text else ""
+
+
+def _extract_smartsheet_text(data: dict) -> str:
+    """Extract smartsheet (智能表格) cell text.
+
+    Structure: data.initialAttributedText.text[0].smartsheet is a base64 + zlib
+    compressed JSON blob. Cells appear as text fragments {"k1":"text","k2":<value>}
+    (or the reverse). We recursively collect every text fragment in document order.
+    """
+    d = data.get("data", data)
+    iat = d.get("initialAttributedText", {})
+    text_list = iat.get("text", [])
+    if not text_list or not isinstance(text_list[0], dict):
+        return ""
+    blob = text_list[0].get("smartsheet")
+    if not isinstance(blob, str) or not blob:
+        return ""
+    try:
+        raw = zlib.decompress(base64.b64decode(blob))
+        payload = json.loads(raw)
+    except Exception:
+        return ""
+
+    fragments: list[str] = []
+
+    def _walk(obj):
+        if isinstance(obj, dict):
+            if obj.get("k1") == "text" and isinstance(obj.get("k2"), str):
+                fragments.append(obj["k2"])
+                return
+            if obj.get("k2") == "text" and isinstance(obj.get("k1"), str):
+                fragments.append(obj["k1"])
+                return
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for x in obj:
+                _walk(x)
+
+    _walk(payload)
+
+    cleaned = [f.strip() for f in fragments if f and f.strip()]
+    if not cleaned:
+        return ""
+    return "\n".join(cleaned)
 
 
 def _decode_sheet_data(raw: bytes) -> str:
@@ -550,6 +721,11 @@ async def _scrape_single_in_context(context, url: str, timeout_ms: int = 60000) 
                 captured["sheet"] = await response.json()
             except Exception:
                 pass
+        elif "dop-api/mind/data/get" in resp_url:
+            try:
+                captured["mind"] = await response.json()
+            except Exception:
+                pass
         elif "dop-api/opendoc" in resp_url:
             try:
                 captured["doc"] = await response.json()
@@ -560,10 +736,10 @@ async def _scrape_single_in_context(context, url: str, timeout_ms: int = 60000) 
 
     try:
         await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
-        await page.wait_for_timeout(8000)
+        await _wait_for_content(page)
 
-        # Prefer sheet data for sheet URLs, doc data for doc URLs
-        data = captured.get("sheet") or captured.get("doc")
+        # Prefer sheet data for sheet URLs, mind for mind URLs, doc data for doc URLs
+        data = captured.get("sheet") or captured.get("mind") or captured.get("doc")
 
         if data is None:
             body_text = await page.inner_text("body")
@@ -572,6 +748,11 @@ async def _scrape_single_in_context(context, url: str, timeout_ms: int = 60000) 
             return {"url": url, "error": "未能获取文档数据", "title": "", "content": ""}
 
         title = _extract_title(data)
+        if not title or title == "未命名文档":
+            if captured.get("doc"):
+                alt = _extract_title(captured["doc"])
+                if alt and alt != "未命名文档":
+                    title = alt
         if not title or title == "未命名文档":
             page_title = await page.title()
             page_title = re.sub(r"\s*[-|–—]\s*(腾讯文档|企业微信).*$", "", page_title).strip()

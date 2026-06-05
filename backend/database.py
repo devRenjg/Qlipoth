@@ -66,9 +66,30 @@ async def init_db():
                 last_retry TIMESTAMP
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT (datetime('now', '+8 hours'))
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS document_tags (
+                document_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL,
+                PRIMARY KEY (document_id, tag_id),
+                FOREIGN KEY (document_id) REFERENCES documents(id),
+                FOREIGN KEY (tag_id) REFERENCES tags(id)
+            )
+        """)
         # Migrations for existing DBs
         try:
             await db.execute("ALTER TABLE documents ADD COLUMN source_url TEXT")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE tags ADD COLUMN description TEXT")
         except Exception:
             pass
         try:
@@ -76,8 +97,24 @@ async def init_db():
         except Exception:
             pass
         try:
+            await db.execute("ALTER TABLE chat_history ADD COLUMN selected_tags TEXT")
+        except Exception:
+            pass
+        try:
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_history(conversation_id, id)"
+            )
+        except Exception:
+            pass
+        try:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_doctag_tag ON document_tags(tag_id)"
+            )
+        except Exception:
+            pass
+        try:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_doctag_doc ON document_tags(document_id)"
             )
         except Exception:
             pass

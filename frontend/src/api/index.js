@@ -12,12 +12,16 @@ export function queryKnowledgeBase(question) {
   return api.post('/query', { question })
 }
 
-export function queryKnowledgeBaseStream(question, { onMeta, onChunk, onDone, onError }, conversationId) {
+export function queryKnowledgeBaseStream(question, { onMeta, onChunk, onDone, onError }, conversationId, tagIds) {
   const controller = new AbortController()
   fetch('/api/query/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, conversation_id: conversationId || null }),
+    body: JSON.stringify({
+      question,
+      conversation_id: conversationId || null,
+      tag_ids: tagIds || [],
+    }),
     signal: controller.signal,
   }).then(async (resp) => {
     if (!resp.ok) {
@@ -67,6 +71,26 @@ export function deleteDocument(id) {
   return api.delete(`/documents/${id}`)
 }
 
+export function getTags() {
+  return api.get('/tags')
+}
+
+export function createTag(name, description) {
+  return api.post('/tags', { name, description })
+}
+
+export function renameTag(id, name, description) {
+  return api.put(`/tags/${id}`, { name, description })
+}
+
+export function deleteTag(id) {
+  return api.delete(`/tags/${id}`)
+}
+
+export function setDocumentTags(docId, tagIds) {
+  return api.put(`/documents/${docId}/tags`, { tag_ids: tagIds })
+}
+
 export function getSettings() {
   return api.get('/settings')
 }
@@ -96,10 +120,11 @@ export function getChatHistory(userId) {
   return api.get('/chat/history', { params })
 }
 
-export function saveChatHistory(question, answer, sourceUrls, userId, conversationId) {
+export function saveChatHistory(question, answer, sourceUrls, userId, conversationId, selectedTags) {
   return api.post('/chat/history', {
     question, answer, source_urls: sourceUrls, user_id: userId,
     conversation_id: conversationId || null,
+    selected_tags: selectedTags || [],
   })
 }
 

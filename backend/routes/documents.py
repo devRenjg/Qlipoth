@@ -1,12 +1,25 @@
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 import aiosqlite
 from config import load_settings, save_settings
 from database import DB_PATH
+from auth import COOKIE_NAME
 from searcher import read_file_content
 
 router = APIRouter(tags=["documents"])
+
+
+async def _require_admin(request: Request):
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        raise HTTPException(401, "未登录")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT role FROM users WHERE token = ?", (token,))
+        caller = await cursor.fetchone()
+        if not caller or caller["role"] != "admin":
+            raise HTTPException(403, "无权限")
 
 
 @router.get("/documents")
@@ -15,7 +28,20 @@ async def list_documents():
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT * FROM documents ORDER BY uploaded_at DESC")
         rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        docs = [dict(row) for row in rows]
+        cursor = await db.execute(
+            "SELECT dt.document_id, t.id, t.name FROM document_tags dt "
+            "JOIN tags t ON dt.tag_id = t.id"
+        )
+        tag_rows = await cursor.fetchall()
+    tags_by_doc: dict[int, list] = {}
+    for tr in tag_rows:
+        tags_by_doc.setdefault(tr["document_id"], []).append(
+            {"id": tr["id"], "name": tr["name"]}
+        )
+    for doc in docs:
+        doc["tags"] = tags_by_doc.get(doc["id"], [])
+    return docs
 
 
 @router.get("/documents/view/{file_name:path}")
@@ -76,9 +102,109 @@ async def delete_document(doc_id: int):
         file_path = kb_dir / doc["stored_path"]
         if file_path.exists():
             file_path.unlink()
+        await db.execute("DELETE FROM document_tags WHERE document_id = ?", (doc_id,))
         await db.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
         await db.commit()
     return {"message": "删除成功"}
+
+
+class TagRequest(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class DocTagsRequest(BaseModel):
+    tag_ids: list[int] = []
+
+
+@router.get("/tags")
+async def list_tags():
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT t.id, t.name, t.description, COUNT(dt.document_id) AS doc_count "
+            "FROM tags t LEFT JOIN document_tags dt ON t.id = dt.tag_id "
+            "GROUP BY t.id, t.name, t.description ORDER BY t.name"
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+@router.post("/tags")
+async def create_tag(req: TagRequest, request: Request):
+    await _require_admin(request)
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(400, "标签名不能为空")
+    desc = (req.description or "").strip() or None
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id, name, description FROM tags WHERE name = ?", (name,)
+        )
+        existing = await cursor.fetchone()
+        if existing:
+            return {
+                "id": existing["id"],
+                "name": existing["name"],
+                "description": existing["description"],
+            }
+        cursor = await db.execute(
+            "INSERT INTO tags (name, description) VALUES (?, ?)", (name, desc)
+        )
+        await db.commit()
+        return {"id": cursor.lastrowid, "name": name, "description": desc}
+
+
+@router.put("/tags/{tag_id}")
+async def rename_tag(tag_id: int, req: TagRequest, request: Request):
+    await _require_admin(request)
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(400, "标签名不能为空")
+    desc = (req.description or "").strip() or None
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id FROM tags WHERE name = ? AND id != ?", (name, tag_id)
+        )
+        if await cursor.fetchone():
+            raise HTTPException(409, "标签名已存在")
+        await db.execute(
+            "UPDATE tags SET name = ?, description = ? WHERE id = ?",
+            (name, desc, tag_id),
+        )
+        await db.commit()
+    return {"id": tag_id, "name": name, "description": desc}
+
+
+@router.delete("/tags/{tag_id}")
+async def delete_tag(tag_id: int, request: Request):
+    await _require_admin(request)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM document_tags WHERE tag_id = ?", (tag_id,))
+        await db.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+        await db.commit()
+    return {"message": "删除成功"}
+
+
+@router.put("/documents/{doc_id}/tags")
+async def set_document_tags(doc_id: int, req: DocTagsRequest, request: Request):
+    await _require_admin(request)
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT id FROM documents WHERE id = ?", (doc_id,))
+        if not await cursor.fetchone():
+            raise HTTPException(404, "文档不存在")
+        await db.execute("DELETE FROM document_tags WHERE document_id = ?", (doc_id,))
+        unique_ids = list(dict.fromkeys(req.tag_ids))
+        for tag_id in unique_ids:
+            await db.execute(
+                "INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)",
+                (doc_id, tag_id),
+            )
+        await db.commit()
+    return {"message": "标签已更新", "tag_ids": unique_ids}
 
 
 class SettingsUpdate(BaseModel):

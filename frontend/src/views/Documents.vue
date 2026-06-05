@@ -2,19 +2,40 @@
   <div class="documents-view">
     <div class="header">
       <h2>文档管理 <span class="doc-count">共 {{ documents.length }} 篇</span></h2>
-      <el-input v-model="filterText" placeholder="筛选文档..." style="width: 240px" clearable />
+      <div class="header-controls">
+        <el-select
+          v-model="filterTags"
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          clearable
+          placeholder="按标签筛选"
+          style="width: 240px"
+        >
+          <el-option v-for="t in tags" :key="t.id" :label="t.name" :value="t.id" />
+        </el-select>
+        <el-input v-model="filterText" placeholder="筛选文档..." style="width: 200px" clearable />
+        <el-button v-if="isAdmin" @click="manageVisible = true">管理标签</el-button>
+      </div>
     </div>
 
     <el-table :data="pagedDocs" stripe v-loading="loading" empty-text="暂无文档">
       <el-table-column prop="original_name" label="文件名" />
+      <el-table-column label="标签" width="220">
+        <template #default="{ row }">
+          <el-tag v-for="t in row.tags" :key="t.id" size="small" class="doc-tag">{{ t.name }}</el-tag>
+          <span v-if="!row.tags.length" class="no-tag">—</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="file_type" label="类型" width="80" />
       <el-table-column prop="file_size" label="大小" width="100">
         <template #default="{ row }">{{ formatSize(row.file_size) }}</template>
       </el-table-column>
       <el-table-column prop="uploaded_at" label="上传时间" width="180" />
-      <el-table-column label="操作" width="160">
+      <el-table-column label="操作" :width="isAdmin ? 220 : 160">
         <template #default="{ row }">
           <el-button size="small" @click="viewDoc(row)">查看</el-button>
+          <el-button v-if="isAdmin" size="small" @click="openTagDialog(row)">标签</el-button>
           <el-button size="small" type="danger" @click="confirmDelete(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -33,30 +54,109 @@
     <el-dialog v-model="dialogVisible" :title="currentDoc?.original_name" width="70%">
       <div class="markdown-body doc-content" v-html="renderedContent"></div>
     </el-dialog>
+
+    <el-dialog v-model="tagDialogVisible" :title="`标签 - ${tagDoc?.original_name || ''}`" width="480px">
+      <el-select
+        v-model="tagDialogSelected"
+        multiple
+        filterable
+        allow-create
+        default-first-option
+        placeholder="选择或输入新标签"
+        style="width: 100%"
+      >
+        <el-option v-for="t in tags" :key="t.id" :label="t.name" :value="t.name" />
+      </el-select>
+      <template #footer>
+        <el-button @click="tagDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="tagSaving" @click="saveDocTags">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="manageVisible" title="管理标签" width="640px">
+      <div class="tag-create-row">
+        <el-input v-model="newTagName" placeholder="新标签名" style="width: 160px" @keyup.enter="addTag" />
+        <el-input v-model="newTagDesc" placeholder="标签定义（可选）" @keyup.enter="addTag" />
+        <el-button type="primary" @click="addTag">新增</el-button>
+      </div>
+      <el-table :data="tags" size="small" max-height="420" empty-text="暂无标签">
+        <el-table-column prop="name" label="标签" width="110" />
+        <el-table-column label="定义">
+          <template #default="{ row }">
+            <el-input
+              v-if="editingTagId === row.id"
+              v-model="editingTagDesc"
+              size="small"
+              type="textarea"
+              :autosize="{ minRows: 1, maxRows: 4 }"
+            />
+            <span v-else class="tag-desc">{{ row.description || '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="doc_count" label="引用" width="60" />
+        <el-table-column label="操作" width="140">
+          <template #default="{ row }">
+            <template v-if="editingTagId === row.id">
+              <el-button size="small" type="primary" text @click="saveTagEdit(row)">保存</el-button>
+              <el-button size="small" text @click="cancelTagEdit">取消</el-button>
+            </template>
+            <template v-else>
+              <el-button size="small" text @click="startTagEdit(row)">编辑</el-button>
+              <el-button size="small" type="danger" text @click="removeTag(row)">删除</el-button>
+            </template>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, inject } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getDocuments, getDocument, deleteDocument } from '../api/index.js'
+import {
+  getDocuments, getDocument, deleteDocument,
+  getTags, createTag, renameTag, deleteTag, setDocumentTags,
+} from '../api/index.js'
 import { renderMarkdown } from '../utils/markdown.js'
 import 'github-markdown-css/github-markdown-light.css'
 
+const currentUser = inject('currentUser')
+const isAdmin = computed(() => currentUser?.value?.role === 'admin')
+
 const documents = ref([])
+const tags = ref([])
 const loading = ref(false)
 const filterText = ref('')
+const filterTags = ref([])
 const dialogVisible = ref(false)
 const currentDoc = ref(null)
 const currentPage = ref(1)
 const pageSize = 50
 
+const tagDialogVisible = ref(false)
+const tagDoc = ref(null)
+const tagDialogSelected = ref([])
+const tagSaving = ref(false)
+const manageVisible = ref(false)
+const newTagName = ref('')
+const newTagDesc = ref('')
+const editingTagId = ref(null)
+const editingTagDesc = ref('')
+
 const renderedContent = computed(() => renderMarkdown(currentDoc.value?.content))
 
 const filteredDocs = computed(() => {
-  if (!filterText.value) return documents.value
-  const q = filterText.value.toLowerCase()
-  return documents.value.filter(d => d.original_name.toLowerCase().includes(q))
+  let list = documents.value
+  if (filterText.value) {
+    const q = filterText.value.toLowerCase()
+    list = list.filter(d => d.original_name.toLowerCase().includes(q))
+  }
+  if (filterTags.value.length) {
+    const sel = new Set(filterTags.value)
+    list = list.filter(d => d.tags.some(t => sel.has(t.id)))
+  }
+  return list
 })
 
 const pagedDocs = computed(() => {
@@ -65,9 +165,9 @@ const pagedDocs = computed(() => {
 })
 
 // 筛选变化时回到第 1 页
-watch(filterText, () => { currentPage.value = 1 })
+watch([filterText, filterTags], () => { currentPage.value = 1 })
 
-onMounted(loadDocs)
+onMounted(() => { loadDocs(); loadTags() })
 
 async function loadDocs() {
   loading.value = true
@@ -79,10 +179,92 @@ async function loadDocs() {
   }
 }
 
+async function loadTags() {
+  try {
+    const { data } = await getTags()
+    tags.value = data
+  } catch {}
+}
+
 async function viewDoc(row) {
   const { data } = await getDocument(row.id)
   currentDoc.value = data
   dialogVisible.value = true
+}
+
+function openTagDialog(row) {
+  tagDoc.value = row
+  tagDialogSelected.value = row.tags.map(t => t.name)
+  tagDialogVisible.value = true
+}
+
+async function saveDocTags() {
+  tagSaving.value = true
+  try {
+    // 选项值为标签名；新建的名字先建标签拿到 id，已有的查 id
+    const ids = []
+    for (const name of tagDialogSelected.value) {
+      let tag = tags.value.find(t => t.name === name)
+      if (!tag) {
+        const { data } = await createTag(name)
+        tag = data
+        await loadTags()
+      }
+      ids.push(tag.id)
+    }
+    await setDocumentTags(tagDoc.value.id, ids)
+    ElMessage.success('标签已更新')
+    tagDialogVisible.value = false
+    await loadDocs()
+    await loadTags()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  } finally {
+    tagSaving.value = false
+  }
+}
+
+async function addTag() {
+  const name = newTagName.value.trim()
+  if (!name) return
+  try {
+    await createTag(name, newTagDesc.value.trim())
+    newTagName.value = ''
+    newTagDesc.value = ''
+    await loadTags()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '新增失败')
+  }
+}
+
+function startTagEdit(row) {
+  editingTagId.value = row.id
+  editingTagDesc.value = row.description || ''
+}
+
+function cancelTagEdit() {
+  editingTagId.value = null
+  editingTagDesc.value = ''
+}
+
+async function saveTagEdit(row) {
+  try {
+    await renameTag(row.id, row.name, editingTagDesc.value.trim())
+    ElMessage.success('已保存')
+    cancelTagEdit()
+    await loadTags()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  }
+}
+
+async function removeTag(row) {
+  await ElMessageBox.confirm(`删除标签 "${row.name}"？将同时移除所有文档对它的引用`, '确认删除', { type: 'warning' })
+  await deleteTag(row.id)
+  ElMessage.success('删除成功')
+  await loadTags()
+  await loadDocs()
+  filterTags.value = filterTags.value.filter(id => id !== row.id)
 }
 
 async function confirmDelete(row) {
@@ -104,7 +286,12 @@ function formatSize(bytes) {
 
 <style scoped>
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.header-controls { display: flex; gap: 10px; align-items: center; }
 .doc-count { font-size: 14px; font-weight: normal; color: #909399; margin-left: 8px; }
 .doc-content { max-height: 65vh; overflow-y: auto; padding: 16px; font-size: 14px; }
+.doc-tag { margin-right: 4px; margin-bottom: 2px; }
+.no-tag { color: #c0c4cc; }
+.tag-create-row { display: flex; gap: 10px; margin-bottom: 16px; }
+.tag-desc { font-size: 13px; color: #606266; white-space: pre-wrap; word-break: break-word; }
 .pagination-bar { margin-top: 20px; display: flex; justify-content: center; }
 </style>

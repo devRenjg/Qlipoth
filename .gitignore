@@ -7,6 +7,7 @@ backend/metadata.db
 backend/config.json
 backend/knowledge_base/
 backend/.browser_data/
+.browser_data/
 frontend/node_modules/
 .claude/
 app.db

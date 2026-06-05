@@ -14,6 +14,17 @@
           @click="loadConversation(item)"
         >
           <div class="history-question">{{ item.last_question }}</div>
+          <div v-if="item.has_tags" class="history-tags">
+            <el-tag
+              v-for="t in item.selected_tags"
+              :key="t.id"
+              size="small"
+              type="warning"
+              effect="plain"
+              class="history-tag"
+            >{{ t.name }}</el-tag>
+            <span v-if="!item.selected_tags || !item.selected_tags.length" class="history-tag-flag">含标签筛选</span>
+          </div>
           <div class="history-meta">
             <span class="history-time">{{ item.created_at }}</span>
             <span v-if="item.turn_count > 1" class="history-turns">{{ item.turn_count }} 轮</span>
@@ -29,6 +40,17 @@
           <div class="shield-icon">&#9670;</div>
           <h2>直播大型活动保障！有问必答！使命必达！</h2>
           <p class="subtitle">克里珀持续以光年级屏障隔绝威胁，维系现存世界的完整。</p>
+          <div v-if="tags.length" class="tag-filter">
+            <span class="tag-filter-label">限定范围：</span>
+            <span
+              v-for="t in tags"
+              :key="t.id"
+              class="tag-chip"
+              :style="tagStyle(t)"
+              @click="toggleTag(t.id)"
+            >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
+            <span v-if="selectedTagIds.length" class="tag-filter-hint">仅在选中标签的文档中检索</span>
+          </div>
           <div class="center-input">
             <div class="input-wrapper">
               <el-input
@@ -78,6 +100,15 @@
       </div>
       <div v-if="messages.length > 0" class="chat-input">
         <div class="input-wrapper">
+          <div v-if="tags.length" class="tag-filter tag-filter-compact">
+            <span
+              v-for="t in tags"
+              :key="t.id"
+              class="tag-chip"
+              :style="tagStyle(t)"
+              @click="toggleTag(t.id)"
+            >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
+          </div>
           <el-input
             v-model="input"
             placeholder="输入你的问题..."
@@ -98,7 +129,7 @@
 <script setup>
 import { ref, inject, nextTick, onMounted } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
-import { queryKnowledgeBaseStream, getConversations, getConversation, saveChatHistory } from '../api/index.js'
+import { queryKnowledgeBaseStream, getConversations, getConversation, saveChatHistory, getTags } from '../api/index.js'
 import { addProfilingRecord } from '../store/profiling.js'
 import { renderMarkdown } from '../utils/markdown.js'
 import 'github-markdown-css/github-markdown-light.css'
@@ -110,6 +141,8 @@ const loading = ref(false)
 const messagesRef = ref(null)
 const conversations = ref([])
 const conversationId = ref(null)
+const tags = ref([])
+const selectedTagIds = ref([])
 
 const presetQuestions = [
   '示例活动值班多少人？',
@@ -117,7 +150,7 @@ const presetQuestions = [
   '示例需求上线后的版本覆盖率多少，对比去年如何？',
 ]
 
-onMounted(() => { loadConversations() })
+onMounted(() => { loadConversations(); loadTags() })
 
 async function loadConversations() {
   try {
@@ -126,6 +159,73 @@ async function loadConversations() {
     const { data } = await getConversations(userId)
     conversations.value = data
   } catch {}
+}
+
+async function loadTags() {
+  try {
+    const { data } = await getTags()
+    // 按文档数降序，空标签沉底
+    tags.value = [...data].sort((a, b) => (b.doc_count || 0) - (a.doc_count || 0))
+  } catch {}
+}
+
+function toggleTag(id) {
+  const i = selectedTagIds.value.indexOf(id)
+  if (i === -1) selectedTagIds.value.push(id)
+  else selectedTagIds.value.splice(i, 1)
+}
+
+// 基于标签语义的配色：安全=危险红、红包=喜庆深红、弹幕=欢快绿……
+const TAG_COLORS = {
+  '安全': '#e63946',        // 危险/重要 → 红
+  '红包': '#c0392b',        // 喜庆 → 深红
+  '弹幕': '#27ae60',        // 欢快 → 绿
+  '高可用保障': '#2f6fed',  // 稳定可靠 → 蓝
+  '业务需求': '#8e44ad',    // 业务 → 紫
+  '直播体验': '#e67e22',    // 体验/暖 → 橙
+  '成本': '#d4a017',        // 金钱 → 金黄
+  '模板与名单': '#16a3a3',  // 规整 → 青
+  '项目管理': '#5c6bc0',    // 管理 → 靛蓝
+  '接口与配置': '#607d8b',  // 技术 → 蓝灰
+}
+
+function hexToRgb(hex) {
+  const h = hex.replace('#', '')
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16),
+  ]
+}
+
+// 未知标签：用名称哈希生成稳定色相，保证同名同色
+function colorForTag(name) {
+  if (TAG_COLORS[name]) return TAG_COLORS[name]
+  let hash = 0
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0
+  const hue = hash % 360
+  return `hsl(${hue}, 55%, 45%)`
+}
+
+function tagStyle(t) {
+  const color = colorForTag(t.name)
+  const selected = selectedTagIds.value.includes(t.id)
+  if (selected) {
+    return { background: color, borderColor: color, color: '#fff' }
+  }
+  // 未选中：浅色底 + 同色描边/文字
+  if (color.startsWith('#')) {
+    const [r, g, b] = hexToRgb(color)
+    return {
+      background: `rgba(${r}, ${g}, ${b}, 0.10)`,
+      borderColor: `rgba(${r}, ${g}, ${b}, 0.45)`,
+      color,
+    }
+  }
+  // hsl 回退
+  const tint = color.replace(')', ', 0.10)').replace('hsl', 'hsla')
+  const ring = color.replace(')', ', 0.45)').replace('hsl', 'hsla')
+  return { background: tint, borderColor: ring, color }
 }
 
 async function loadConversation(item) {
@@ -172,6 +272,12 @@ async function sendMessage() {
   if (!conversationId.value) conversationId.value = crypto.randomUUID()
   const convId = conversationId.value
 
+  // 本轮锁定所选标签：快照 id 与名称，用于检索过滤 + 历史记录
+  const tagIds = [...selectedTagIds.value]
+  const tagSnapshot = tags.value
+    .filter(t => tagIds.includes(t.id))
+    .map(t => ({ id: t.id, name: t.name }))
+
   messages.value.push({ role: 'user', text: question })
   input.value = ''
   loading.value = true
@@ -208,7 +314,7 @@ async function sendMessage() {
       // Save to history
       const answer = messages.value[msgIdx].text
       const userId = currentUser?.value?.id || null
-      saveChatHistory(question, answer, finalSourceUrls, userId, convId)
+      saveChatHistory(question, answer, finalSourceUrls, userId, convId, tagSnapshot)
         .then(() => loadConversations()).catch(() => {})
     },
     onError(err) {
@@ -216,7 +322,7 @@ async function sendMessage() {
       messages.value[msgIdx].html = ''
       loading.value = false
     },
-  }, convId)
+  }, convId, tagIds)
 }
 
 function formatMarkdown(text) {
@@ -268,6 +374,9 @@ async function scrollToBottom() {
   white-space: nowrap;
 }
 .history-meta { display: flex; gap: 8px; margin-top: 4px; font-size: 11px; }
+.history-tags { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.history-tag { font-size: 11px; }
+.history-tag-flag { font-size: 11px; color: #e6a23c; }
 .history-user { color: #4d6bfe; }
 .history-turns { color: #67c23a; }
 .history-time { color: #999; }
@@ -307,6 +416,41 @@ async function scrollToBottom() {
   align-items: center;
 }
 .preset-label { font-size: 14px; color: #888888; }
+.tag-filter {
+  margin-top: 14px;
+  margin-bottom: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  align-items: center;
+}
+.tag-filter-label { font-size: 13px; color: #888888; }
+.tag-filter-hint { font-size: 12px; color: #e6a23c; margin-left: 4px; width: 100%; text-align: center; }
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+.tag-chip:hover { filter: brightness(0.96); transform: translateY(-1px); }
+.tag-chip-count {
+  font-style: normal;
+  font-size: 11px;
+  opacity: 0.7;
+}
+.tag-filter-compact {
+  margin-top: 0;
+  margin-bottom: 10px;
+  justify-content: flex-start;
+}
 .preset-tag {
   cursor: pointer;
   font-size: 14px;

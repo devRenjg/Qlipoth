@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import aiosqlite
@@ -13,6 +13,25 @@ from config import load_settings
 from parsers import parse_file, PARSERS, extract_owners
 from database import DB_PATH
 from scraper import scrape_tencent_doc, scrape_tencent_doc_recursive, validate_tencent_doc_url
+from tagger import tag_document
+
+
+def _parse_tags(raw: str | list[str] | None) -> list[str]:
+    """Accept JSON array string, comma-separated string, or list. Return clean name list."""
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        items = raw
+    else:
+        s = raw.strip()
+        if s.startswith("["):
+            try:
+                items = json.loads(s)
+            except json.JSONDecodeError:
+                items = s.split(",")
+        else:
+            items = s.split(",")
+    return [str(t).strip() for t in items if str(t).strip()]
 
 router = APIRouter(tags=["upload"])
 ALLOWED_EXTENSIONS = set(PARSERS.keys())
@@ -25,10 +44,12 @@ def _now_bj() -> str:
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), tags: str = Form(default="")):
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"不支持的文件格式: {ext}，支持: {', '.join(ALLOWED_EXTENSIONS)}")
+
+    manual_tags = _parse_tags(tags)
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -61,11 +82,14 @@ async def upload_file(file: UploadFile = File(...)):
         file_size = stored_path.stat().st_size
 
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
+            cursor = await db.execute(
                 "INSERT INTO documents (original_name, stored_path, file_type, file_size, uploaded_at) VALUES (?, ?, ?, ?, ?)",
                 (file.filename, stored_name, ext, file_size, _now_bj()),
             )
             await db.commit()
+            doc_id = cursor.lastrowid
+
+        applied_tags = await tag_document(doc_id, file.filename, content, manual_tags)
 
         tree_entry = [{"title": file.filename, "stored_as": stored_name, "depth": 0, "url": "", "children": [], "parent": None, "error": None}]
         await _save_import_tree(f"file://{file.filename}", file.filename, tree_entry)
@@ -74,12 +98,13 @@ async def upload_file(file: UploadFile = File(...)):
         if temp_path.exists():
             temp_path.unlink()
 
-    return {"message": "上传成功", "original_name": file.filename, "stored_as": stored_name}
+    return {"message": "上传成功", "original_name": file.filename, "stored_as": stored_name, "tags": applied_tags}
 
 
 class UrlImportRequest(BaseModel):
     url: str
     max_depth: int = 2
+    tags: list[str] = []
 
     @property
     def recursive(self) -> bool:
@@ -145,7 +170,8 @@ async def upload_from_url(req: UrlImportRequest):
             traceback.print_exc()
             raise HTTPException(500, f"抓取失败: {type(e).__name__}: {str(e)}")
 
-        stored_name = await _save_document(title, content, req.url, None)
+        stored_name, doc_id = await _save_document(title, content, req.url, None)
+        await tag_document(doc_id, title, content, req.tags)
         doc_entry = {"title": title, "stored_as": stored_name, "depth": 0, "url": req.url, "children": [], "parent": None, "error": None}
 
         tree_data = [doc_entry]
@@ -197,7 +223,10 @@ async def upload_from_url(req: UrlImportRequest):
             parent_title, child_titles
         )
 
-        stored_name = await _save_document(result["title"], content, result["url"], parent_title)
+        stored_name, doc_id = await _save_document(result["title"], content, result["url"], parent_title)
+        # 根文档(depth 0)用用户手填标签；子文档自动打标
+        doc_manual = req.tags if result["depth"] == 0 else None
+        await tag_document(doc_id, result["title"], content, doc_manual)
         title_to_stored[result["url"]] = {"title": result["title"], "stored_as": stored_name}
 
         documents.append({
@@ -251,7 +280,8 @@ async def upload_from_url_stream(req: UrlImportRequest):
         except Exception as e:
             raise HTTPException(500, f"抓取失败: {type(e).__name__}: {str(e)}")
 
-        stored_name = await _save_document(title, content, req.url, None)
+        stored_name, doc_id = await _save_document(title, content, req.url, None)
+        await tag_document(doc_id, title, content, req.tags)
         doc_entry = {"title": title, "stored_as": stored_name, "depth": 0, "url": req.url, "children": [], "parent": None, "parent_url": None, "error": None}
         await _save_import_tree(req.url, title, [doc_entry])
 
@@ -334,11 +364,19 @@ async def upload_from_url_stream(req: UrlImportRequest):
                 norm_url = _normalize_url(result["url"])
 
                 async with aiosqlite.connect(DB_PATH) as db:
-                    await db.execute(
+                    cursor = await db.execute(
                         "INSERT INTO documents (original_name, stored_path, file_type, file_size, source_url, uploaded_at) VALUES (?, ?, ?, ?, ?, ?)",
                         (source_label, stored_name, ".url", file_size, norm_url, _now_bj()),
                     )
                     await db.commit()
+                    doc_id = cursor.lastrowid
+
+                # 根文档用用户手填标签，子文档自动打标；best-effort 不阻断导入
+                try:
+                    doc_manual = req.tags if result["depth"] == 0 else None
+                    await tag_document(doc_id, result["title"], content, doc_manual)
+                except Exception:
+                    pass
 
                 title_to_stored[result["url"]] = {"title": result["title"], "stored_as": stored_name}
                 documents.append({
@@ -434,7 +472,7 @@ def _build_markdown_with_relations(
     return header + text
 
 
-async def _save_document(title: str, content: str, url: str, parent_title: str | None) -> str:
+async def _save_document(title: str, content: str, url: str, parent_title: str | None) -> tuple[str, int]:
     kb_dir = Path(load_settings().knowledge_base_dir)
     kb_dir.mkdir(parents=True, exist_ok=True)
 
@@ -456,13 +494,14 @@ async def _save_document(title: str, content: str, url: str, parent_title: str |
     norm_url = _normalize_url(url)
 
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
+        cursor = await db.execute(
             "INSERT INTO documents (original_name, stored_path, file_type, file_size, source_url, uploaded_at) VALUES (?, ?, ?, ?, ?, ?)",
             (source_label, stored_name, ".url", file_size, norm_url, _now_bj()),
         )
         await db.commit()
+        doc_id = cursor.lastrowid
 
-    return stored_name
+    return stored_name, doc_id
 
 
 async def _save_import_tree(root_url: str, root_title: str, tree_entries: list[dict]):
