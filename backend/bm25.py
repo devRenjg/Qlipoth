@@ -2,7 +2,8 @@
 
 为什么零依赖：A/B 评测(eval/ab_eval.py)显示 char-bigram BM25 (Recall@10=0.78) 优于
 jieba 词级 (0.75)，故生产不引入 jieba/rank_bm25——气隙环境零新增依赖、零回归面。
-与现网 grep+IDF 召回做 RRF 融合后，golden_set Recall@10 0.71→0.83、MRR 0.44→0.54。
+与现网 grep+IDF 召回做 RRF 融合、并把长度归一参数 b 调到 1.0 后，golden_set
+Recall@10 0.71→0.87、MRR 0.44→0.58（调参见 eval/bm25_tune.py）。
 
 线上以"旁路重排"接入：grep 召回不变，仅对选出的文件列表做 RRF 融合，任何异常回退
 原 grep 排序，保证缺省零影响。
@@ -16,7 +17,10 @@ from pathlib import Path
 from config import load_settings
 
 K1 = 1.5
-B = 0.75
+# b=1.0（完全长度归一）：本库 avgdl≈1万 token、文档长度差异极大（巨型导入文档多），
+# 经 eval/bm25_tune.py 在 100 题 golden set 网格调参，b 从教科书默认 0.75 调到 1.0：
+# 纯 BM25 Recall@10 0.79→0.85 / MRR 0.54→0.60，与 grep 融合后 0.86→0.87，无任一类型回退。
+B = 1.0
 _TOKEN_RE = re.compile(r'[a-zA-Z0-9]+|[一-鿿]')
 
 
