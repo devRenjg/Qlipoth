@@ -128,8 +128,10 @@ ANSWER_PROMPT = """你是 大型活动保障知识库助手，统筹所有参与
 - 不要只回答某个部门或某个工种的数据，除非用户明确指定了范围"""
 
 
-async def chat_completion(messages: list[dict], temperature: float = 0) -> tuple[str, float]:
-    """Returns (response_text, elapsed_seconds). Supports OpenAI and Anthropic API formats."""
+async def chat_completion(messages: list[dict], temperature: float = 0, model: str = "") -> tuple[str, float]:
+    """Returns (response_text, elapsed_seconds). Supports OpenAI and Anthropic API formats.
+
+    model 非空时覆盖 settings.llm_model（用于问题分类路由按类选模型）。"""
     settings = load_settings()
     base_url = settings.llm_base_url.rstrip("/")
     api_format = settings.llm_api_format
@@ -138,6 +140,8 @@ async def chat_completion(messages: list[dict], temperature: float = 0) -> tuple
         url, headers, payload = _build_anthropic_request(settings, messages, temperature, base_url)
     else:
         url, headers, payload = _build_openai_request(settings, messages, temperature, base_url)
+    if model:
+        payload["model"] = model
 
     last_err = None
     for attempt in range(3):
@@ -233,8 +237,10 @@ async def generate_search_strategy(question: str) -> tuple[dict, float]:
         return {"keywords": [question], "file_pattern": "*", "need_full_file": False}, elapsed
 
 
-async def generate_answer(question: str, search_results: str, history_block: str = "") -> tuple[str, float]:
-    """Returns (answer_text, llm_elapsed_seconds). history_block 为空时走原 ANSWER_PROMPT，字节不变。"""
+async def generate_answer(question: str, search_results: str, history_block: str = "", model: str = "") -> tuple[str, float]:
+    """Returns (answer_text, llm_elapsed_seconds). history_block 为空时走原 ANSWER_PROMPT，字节不变。
+
+    model 非空时覆盖回答模型（问题分类路由用）。"""
     if history_block:
         prompt = ANSWER_PROMPT_WITH_HISTORY.format(
             soul=SOUL, conversation_history=history_block,
@@ -244,14 +250,15 @@ async def generate_answer(question: str, search_results: str, history_block: str
         prompt = ANSWER_PROMPT.format(soul=SOUL, search_results=search_results, question=question)
     return await chat_completion([
         {"role": "user", "content": prompt},
-    ], temperature=0.3)
+    ], temperature=0.3, model=model)
 
 
-async def stream_answer(question: str, search_results: str, history_block: str = ""):
+async def stream_answer(question: str, search_results: str, history_block: str = "", model: str = ""):
     """Yields text chunks as they arrive from the LLM. history_block 为空时走原 ANSWER_PROMPT。
 
     若一次流式返回 0 字符（DeepSeek 偶发空补全），自动重试一次；仍为空则退回非流式
     generate_answer 兜底，避免前端拿到空白答案（曾导致整轮"答非所问"）。
+    model 非空时覆盖回答模型（问题分类路由用）。
     """
     settings = load_settings()
     base_url = settings.llm_base_url.rstrip("/")
@@ -267,14 +274,14 @@ async def stream_answer(question: str, search_results: str, history_block: str =
     messages = [{"role": "user", "content": prompt}]
 
     yielded_chars = 0
-    async for text in _stream_once(messages, settings, base_url, api_format):
+    async for text in _stream_once(messages, settings, base_url, api_format, model):
         yielded_chars += len(text)
         yield text
     if yielded_chars:
         return
 
     # 空补全：重试一次流式
-    async for text in _stream_once(messages, settings, base_url, api_format):
+    async for text in _stream_once(messages, settings, base_url, api_format, model):
         yielded_chars += len(text)
         yield text
     if yielded_chars:
@@ -282,13 +289,13 @@ async def stream_answer(question: str, search_results: str, history_block: str =
 
     # 仍为空：非流式兜底
     try:
-        answer, _ = await generate_answer(question, search_results, history_block)
+        answer, _ = await generate_answer(question, search_results, history_block, model=model)
     except RuntimeError:
         answer = ""
     yield answer.strip() or "抱歉，本次未能生成回答，请重试。"
 
 
-async def _stream_once(messages, settings, base_url, api_format):
+async def _stream_once(messages, settings, base_url, api_format, model: str = ""):
     """一次流式请求，逐块产出文本。HTTP >=400 抛 RuntimeError；空补全则不产出任何块。"""
     if api_format == "anthropic":
         url, headers, payload = _build_anthropic_request(settings, messages, 0.3, base_url)
@@ -296,6 +303,8 @@ async def _stream_once(messages, settings, base_url, api_format):
     else:
         url, headers, payload = _build_openai_request(settings, messages, 0.3, base_url)
         payload["stream"] = True
+    if model:
+        payload["model"] = model
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
         async with client.stream("POST", url, json=payload, headers=headers) as resp:

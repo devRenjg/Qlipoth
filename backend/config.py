@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "https://api.deepseek.com"
     llm_model: str = "deepseek-chat"
+    llm_model_fast: str = ""  # 路由快模型（简单类用），空=禁用路由全走 llm_model
     llm_api_format: str = "openai"  # "openai" or "anthropic"
     host: str = "0.0.0.0"
     port: int = 8000
