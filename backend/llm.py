@@ -248,7 +248,11 @@ async def generate_answer(question: str, search_results: str, history_block: str
 
 
 async def stream_answer(question: str, search_results: str, history_block: str = ""):
-    """Yields text chunks as they arrive from the LLM. history_block 为空时走原 ANSWER_PROMPT。"""
+    """Yields text chunks as they arrive from the LLM. history_block 为空时走原 ANSWER_PROMPT。
+
+    若一次流式返回 0 字符（DeepSeek 偶发空补全），自动重试一次；仍为空则退回非流式
+    generate_answer 兜底，避免前端拿到空白答案（曾导致整轮"答非所问"）。
+    """
     settings = load_settings()
     base_url = settings.llm_base_url.rstrip("/")
     api_format = settings.llm_api_format
@@ -262,6 +266,30 @@ async def stream_answer(question: str, search_results: str, history_block: str =
         prompt = ANSWER_PROMPT.format(soul=SOUL, search_results=search_results, question=question)
     messages = [{"role": "user", "content": prompt}]
 
+    yielded_chars = 0
+    async for text in _stream_once(messages, settings, base_url, api_format):
+        yielded_chars += len(text)
+        yield text
+    if yielded_chars:
+        return
+
+    # 空补全：重试一次流式
+    async for text in _stream_once(messages, settings, base_url, api_format):
+        yielded_chars += len(text)
+        yield text
+    if yielded_chars:
+        return
+
+    # 仍为空：非流式兜底
+    try:
+        answer, _ = await generate_answer(question, search_results, history_block)
+    except RuntimeError:
+        answer = ""
+    yield answer.strip() or "抱歉，本次未能生成回答，请重试。"
+
+
+async def _stream_once(messages, settings, base_url, api_format):
+    """一次流式请求，逐块产出文本。HTTP >=400 抛 RuntimeError；空补全则不产出任何块。"""
     if api_format == "anthropic":
         url, headers, payload = _build_anthropic_request(settings, messages, 0.3, base_url)
         payload["stream"] = True
