@@ -515,24 +515,57 @@ async def _save_import_tree(root_url: str, root_title: str, tree_entries: list[d
 
 @router.get("/upload/trees")
 async def list_import_trees():
-    """List all import tree records."""
+    """List all import tree records.
+
+    附带从 tree_data 计算的成功/跳过/失败计数与展示标题兜底，
+    便于前端导入历史一眼看清结果（修复 root_title='未知' 且只显示成功数的展示问题）。
+    """
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT id, root_url, root_title, tree_data, doc_count, imported_at FROM import_trees ORDER BY imported_at DESC"
         )
         rows = await cursor.fetchall()
-        return [
-            {
-                "id": row["id"],
-                "root_url": row["root_url"],
-                "root_title": row["root_title"],
-                "tree": json.loads(row["tree_data"]),
-                "doc_count": row["doc_count"],
-                "imported_at": row["imported_at"],
-            }
-            for row in rows
-        ]
+        return [_tree_record(row) for row in rows]
+
+
+def _tree_node_counts(tree: list[dict]) -> dict:
+    """从扁平 tree_data 统计成功/跳过(已存在)/失败数。"""
+    success = skipped = failed = 0
+    for n in tree:
+        if n.get("error"):
+            failed += 1
+        elif n.get("stored_as") == "(已存在)":
+            skipped += 1
+        elif n.get("stored_as"):
+            success += 1
+    return {"success": success, "skipped": skipped, "failed": failed, "total": len(tree)}
+
+
+def _tree_display_title(root_title: str, tree: list[dict], root_url: str) -> str:
+    """root_title 为'未知'/空时，回退到首个有标题的成功节点，仍无则用 URL。"""
+    if root_title and root_title != "未知":
+        return root_title
+    for n in tree:
+        t = (n.get("title") or "").strip()
+        if t and not n.get("error"):
+            return t
+    return root_url or "未知来源"
+
+
+def _tree_record(row) -> dict:
+    tree = json.loads(row["tree_data"])
+    counts = _tree_node_counts(tree)
+    return {
+        "id": row["id"],
+        "root_url": row["root_url"],
+        "root_title": row["root_title"],
+        "display_title": _tree_display_title(row["root_title"], tree, row["root_url"]),
+        "tree": tree,
+        "doc_count": row["doc_count"],
+        "counts": counts,
+        "imported_at": row["imported_at"],
+    }
 
 
 @router.delete("/upload/trees/{tree_id}")
