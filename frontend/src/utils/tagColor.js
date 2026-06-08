@@ -11,6 +11,17 @@ const TAG_COLORS = {
   '模板与名单': '#16a3a3',  // 规整 → 青
   '项目管理': '#5c6bc0',    // 管理 → 靛蓝
   '接口与配置': '#607d8b',  // 技术 → 蓝灰
+  // 大型活动维度（顶层标签，用醒目暖色系，与主题标签区分）
+  'S赛': '#d81b60',         // 赛事 → 品红
+  '跨晚': '#7b1fa2',        // 跨年 → 深紫
+  '春晚': '#e53935',        // 春节 → 喜庆红
+}
+
+// 活动维度标签集合（页面上把活动标签与主题标签分组展示）
+export const ACTIVITY_TAGS = ['S赛', '跨晚', '春晚']
+
+export function isActivityTag(name) {
+  return ACTIVITY_TAGS.includes(name)
 }
 
 function hexToRgb(hex) {

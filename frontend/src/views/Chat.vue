@@ -43,7 +43,15 @@
           <div v-if="tags.length" class="tag-filter">
             <span class="tag-filter-label">限定范围：</span>
             <span
-              v-for="t in tags"
+              v-for="t in activityTags"
+              :key="t.id"
+              class="tag-chip tag-chip-activity"
+              :style="tagStyle(t)"
+              @click="toggleTag(t.id)"
+            >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
+            <span v-if="activityTags.length" class="tag-group-sep">·</span>
+            <span
+              v-for="t in topicTags"
               :key="t.id"
               class="tag-chip"
               :style="tagStyle(t)"
@@ -118,7 +126,15 @@
         <div class="input-wrapper">
           <div v-if="tags.length" class="tag-filter tag-filter-compact">
             <span
-              v-for="t in tags"
+              v-for="t in activityTags"
+              :key="t.id"
+              class="tag-chip tag-chip-activity"
+              :style="tagStyle(t)"
+              @click="toggleTag(t.id)"
+            >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
+            <span v-if="activityTags.length" class="tag-group-sep">·</span>
+            <span
+              v-for="t in topicTags"
               :key="t.id"
               class="tag-chip"
               :style="tagStyle(t)"
@@ -143,12 +159,12 @@
 </template>
 
 <script setup>
-import { ref, inject, nextTick, onMounted } from 'vue'
+import { ref, inject, nextTick, onMounted, computed } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 import { queryKnowledgeBaseStream, getConversations, getConversation, saveChatHistory, getTags } from '../api/index.js'
 import { addProfilingRecord } from '../store/profiling.js'
 import { renderMarkdown } from '../utils/markdown.js'
-import { tagChipStyle } from '../utils/tagColor.js'
+import { tagChipStyle, isActivityTag } from '../utils/tagColor.js'
 import 'github-markdown-css/github-markdown-light.css'
 
 const currentUser = inject('currentUser')
@@ -159,6 +175,9 @@ const messagesRef = ref(null)
 const conversations = ref([])
 const conversationId = ref(null)
 const tags = ref([])
+// 活动维度标签与主题标签分组展示（活动标签更醒目、置于前）
+const activityTags = computed(() => tags.value.filter(t => isActivityTag(t.name)))
+const topicTags = computed(() => tags.value.filter(t => !isActivityTag(t.name)))
 const selectedTagIds = ref([])
 
 const presetQuestions = [
@@ -411,6 +430,8 @@ async function scrollToBottom() {
   transition: all 0.15s ease;
 }
 .tag-chip:hover { filter: brightness(0.96); transform: translateY(-1px); }
+.tag-chip-activity { font-weight: 600; }
+.tag-group-sep { color: #c0c4cc; margin: 0 2px; user-select: none; }
 .tag-chip-count {
   font-style: normal;
   font-size: 11px;

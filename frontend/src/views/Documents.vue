@@ -119,7 +119,7 @@ import {
   getTags, createTag, renameTag, deleteTag, setDocumentTags,
 } from '../api/index.js'
 import { renderMarkdown } from '../utils/markdown.js'
-import { tagChipStyle } from '../utils/tagColor.js'
+import { tagChipStyle, isActivityTag } from '../utils/tagColor.js'
 import 'github-markdown-css/github-markdown-light.css'
 
 const currentUser = inject('currentUser')
@@ -183,7 +183,12 @@ async function loadDocs() {
 async function loadTags() {
   try {
     const { data } = await getTags()
-    tags.value = data
+    // 活动维度标签置前，便于按大型活动筛选
+    tags.value = [...data].sort((a, b) => {
+      const av = isActivityTag(a.name) ? 0 : 1
+      const bv = isActivityTag(b.name) ? 0 : 1
+      return av - bv
+    })
   } catch {}
 }
 
