@@ -20,12 +20,30 @@ from config import load_settings
 DB = load_settings().db_path
 STAGES = ["备战前期", "压测演练", "上线前", "活动当天", "活动后", "未分类"]
 
-SYS = f"""给定一条大型活动保障的"踩坑条目"，判定两件事：
-1. stage 保障周期阶段(这个坑该在哪个阶段防范/发生)，从这些选一个：备战前期 / 压测演练 / 上线前 / 活动当天 / 活动后；判不出填"未分类"
-2. team 负责团队、owner 负责人：仅当条目内容里明确体现归属时填，**不确定就留空字符串**，不要猜
+SYS = f"""给定一条大型活动保障的"踩坑条目"(含其来源文档标题)，判定三件事：
+1. stage 保障周期阶段，从这些选一个：备战前期 / 压测演练 / 上线前 / 活动当天 / 活动后；判不出填"未分类"
+2. team 负责团队/业务线：结合来源文档标题与条目内容判定所属团队或业务线（如 流媒体、基架、弹幕、OTT/TV端、产品、研发、质量保障、直播体验、带宽/成本、安全 等），尽量填、判不出才留空
+3. owner 负责人：仅当内容里出现**真实中文姓名**时填；遇脱敏ID(@eJP3/@autoZF等字母数字乱码)、字体名(微软雅黑)、纯数字一律**留空**，绝不当负责人
 
-返回严格 JSON(不要 markdown)：{{"stage": "压测演练", "team": "", "owner": ""}}
+返回严格 JSON(不要 markdown)：{{"stage": "压测演练", "team": "流媒体", "owner": ""}}
 stage 必须取自上面六个值之一。"""
+
+
+def _clean_owner(name: str) -> str:
+    """只保留真实中文姓名：剔除脱敏ID(字母数字)、字体名、纯数字、乱码。"""
+    import re
+    name = (name or "").strip().lstrip("@")
+    if not name:
+        return ""
+    # 含字母/纯数字/已知噪声 → 丢弃
+    if re.search(r"[A-Za-z0-9]", name):
+        return ""
+    if name in ("微软雅黑", "宋体", "黑体"):
+        return ""
+    # 必须含中文且长度合理
+    if not re.search(r"[一-鿿]", name) or len(name) > 8:
+        return ""
+    return name
 
 
 async def judge(item, sem):
@@ -46,7 +64,7 @@ async def judge(item, sem):
         return {"stage": "未分类", "team": "", "owner": ""}
     stage = d.get("stage", "未分类")
     return {"stage": stage if stage in STAGES else "未分类",
-            "team": (d.get("team") or "").strip(), "owner": (d.get("owner") or "").strip()}
+            "team": (d.get("team") or "").strip(), "owner": _clean_owner(d.get("owner"))}
 
 
 async def main():
