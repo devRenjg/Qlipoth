@@ -50,11 +50,18 @@ async def _run_one(q: dict, k: int) -> dict:
         strategy, _ = await generate_search_strategy(question)
     except Exception as e:  # noqa: BLE001
         return {"id": q["id"], "error": str(e), "relevant": list(relevant),
-                "selected": [], "rank": None, "type": q.get("type", "")}
+                "selected": [], "rank": None, "type": q.get("type", ""),
+                "tags": q.get("tags", []), "era": q.get("era", "")}
     keywords = strategy.get("keywords", [question])
     file_pattern = strategy.get("file_pattern", "*")
     results = grep_search(keywords, file_pattern)
     selected = [_norm(f) for f in _select_files(results, max_files=k)]
+    # 生产链路含 BM25-RRF 旁路融合，基准须与线上一致
+    try:
+        from bm25 import fuse_select
+        selected = [_norm(f) for f in fuse_select(selected, question, max_files=k)]
+    except Exception:  # noqa: BLE001
+        pass
     elapsed = time.perf_counter() - t0
 
     # 第一个命中相关文档的排名(1-based),用于 MRR
@@ -68,6 +75,8 @@ async def _run_one(q: dict, k: int) -> dict:
         "id": q["id"],
         "question": question,
         "type": q.get("type", ""),
+        "tags": q.get("tags", []),
+        "era": q.get("era", ""),
         "relevant": list(relevant),
         "selected": selected,
         "keywords": keywords,
@@ -134,6 +143,23 @@ async def main():
     for t, rs in grouped.items():
         by_type[t] = _metrics(rs, args.k)
 
+    # 按活动期分组
+    by_era = {}
+    g_era = defaultdict(list)
+    for r in rows:
+        g_era[r.get("era", "")].append(r)
+    for e, rs in g_era.items():
+        by_era[e] = _metrics(rs, args.k)
+
+    # 按标签分组（一题多标签，分别计入各标签）
+    by_tag = {}
+    g_tag = defaultdict(list)
+    for r in rows:
+        for tg in r.get("tags", []):
+            g_tag[tg].append(r)
+    for tg, rs in g_tag.items():
+        by_tag[tg] = _metrics(rs, args.k)
+
     errors = [r for r in rows if "error" in r]
 
     # ---- 终端输出 ----
@@ -148,6 +174,14 @@ async def main():
         m = by_type[t]
         print(f"  {t:<8} n={m.get('n',0):<3} Recall={m.get('recall_at_k',0):<6} "
               f"MRR={m.get('mrr',0):<6} Prec={m.get('precision_at_k',0)}")
+    print("\n=== 分活动期 ===")
+    for e in sorted(by_era):
+        m = by_era[e]
+        print(f"  {e:<10} n={m.get('n',0):<3} Recall={m.get('recall_at_k',0):<6} MRR={m.get('mrr',0)}")
+    print("\n=== 分标签 ===")
+    for tg in sorted(by_tag, key=lambda x: -by_tag[x].get('n', 0)):
+        m = by_tag[tg]
+        print(f"  {tg:<10} n={m.get('n',0):<3} Recall={m.get('recall_at_k',0):<6} MRR={m.get('mrr',0)}")
 
     # ---- 写报告 ----
     REPORTS_DIR.mkdir(exist_ok=True)
@@ -163,6 +197,8 @@ async def main():
         "n_questions": len(golden),
         "overall": overall,
         "by_type": by_type,
+        "by_era": by_era,
+        "by_tag": by_tag,
         "errors": [{"id": e["id"], "error": e["error"]} for e in errors],
         "details": rows,
     }
@@ -201,6 +237,16 @@ def _write_md_report(path: Path, rep: dict, total_time: float):
         m = rep["by_type"][t]
         lines.append(f"| {t} | {m.get('n',0)} | {m.get('recall_at_k',0)} | "
                      f"{m.get('mrr',0)} | {m.get('precision_at_k',0)} |")
+    lines += ["", "## 分活动期指标", "",
+              "| 活动期 | 题数 | Recall | MRR |", "|------|------|--------|-----|"]
+    for e in sorted(rep.get("by_era", {})):
+        m = rep["by_era"][e]
+        lines.append(f"| {e} | {m.get('n',0)} | {m.get('recall_at_k',0)} | {m.get('mrr',0)} |")
+    lines += ["", "## 分标签指标", "",
+              "| 标签 | 题数 | Recall | MRR |", "|------|------|--------|-----|"]
+    for tg in sorted(rep.get("by_tag", {}), key=lambda x: -rep["by_tag"][x].get("n", 0)):
+        m = rep["by_tag"][tg]
+        lines.append(f"| {tg} | {m.get('n',0)} | {m.get('recall_at_k',0)} | {m.get('mrr',0)} |")
     lines += ["", "## 未命中 / 弱命中明细 (rank 为空或无交集)", ""]
     for r in rep["details"]:
         if "error" in r:
