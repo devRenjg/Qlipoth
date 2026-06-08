@@ -140,3 +140,29 @@ export function getConversation(conversationId) {
 export function deleteChatHistory(id) {
   return api.delete(`/chat/history/${id}`)
 }
+
+// 保障清单（历史踩坑预警）
+export function generateChecklist(activity, title) {
+  return api.post('/checklist/generate', { activity, title })
+}
+export function getChecklistProgress(id) {
+  return api.get(`/checklist/generate/${id}/progress`)
+}
+export function listChecklists() {
+  return api.get('/checklist/list')
+}
+export function getChecklist(id) {
+  return api.get(`/checklist/${id}`)
+}
+export function updateChecklistItem(itemId, data) {
+  return api.patch(`/checklist/item/${itemId}`, data)
+}
+export function addChecklistItem(checklistId, data) {
+  return api.post(`/checklist/${checklistId}/item`, data)
+}
+export function deleteChecklistItem(itemId) {
+  return api.delete(`/checklist/item/${itemId}`)
+}
+export function deleteChecklist(id) {
+  return api.delete(`/checklist/${id}`)
+}

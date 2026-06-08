@@ -118,4 +118,37 @@ async def init_db():
             )
         except Exception:
             pass
+        # 保障清单（历史踩坑预警）：一份清单 + 多条结构化踩坑条目
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS checklists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                activity TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT DEFAULT 'active',
+                source_doc_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT (datetime('now', '+8 hours'))
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS checklist_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                checklist_id INTEGER NOT NULL,
+                dimension TEXT NOT NULL,
+                phenomenon TEXT,
+                cause TEXT,
+                handling TEXT,
+                suggestion TEXT,
+                timing TEXT,
+                source_files TEXT,
+                handled INTEGER DEFAULT 0,
+                sort_order INTEGER DEFAULT 0,
+                FOREIGN KEY (checklist_id) REFERENCES checklists(id)
+            )
+        """)
+        try:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_checklist_item ON checklist_items(checklist_id)"
+            )
+        except Exception:
+            pass
         await db.commit()
