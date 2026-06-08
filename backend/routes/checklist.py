@@ -84,16 +84,16 @@ def _review_docs_sql():
     )
 
 
-async def _require_admin(request: Request):
+async def _require_login(request: Request):
+    """保障清单对所有登录用户开放（admin/super/user 均可查看与生成）。"""
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         raise HTTPException(401, "未登录")
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT role FROM users WHERE token = ?", (token,))
-        caller = await cur.fetchone()
-        if not caller or caller["role"] != "admin":
-            raise HTTPException(403, "无权限")
+        cur = await db.execute("SELECT id FROM users WHERE token = ?", (token,))
+        if not await cur.fetchone():
+            raise HTTPException(401, "登录已失效")
 
 
 async def _extract_from_doc(name: str, content: str, sem: asyncio.Semaphore) -> list[dict]:
@@ -192,7 +192,7 @@ class GenerateReq(BaseModel):
 
 @router.post("/checklist/generate")
 async def generate_checklist(req: GenerateReq, request: Request):
-    await _require_admin(request)
+    await _require_login(request)
     if req.activity not in ACTIVITIES:
         raise HTTPException(400, f"activity 必须是 {ACTIVITIES} 之一")
     title = req.title or f"{req.activity} 备战踩坑清单"
@@ -209,7 +209,7 @@ async def generate_checklist(req: GenerateReq, request: Request):
 
 @router.get("/checklist/generate/{checklist_id}/progress")
 async def generate_progress(checklist_id: int, request: Request):
-    await _require_admin(request)
+    await _require_login(request)
     prog = _GEN_PROGRESS.get(checklist_id)
     if not prog:
         # 进程重启后内存丢失：看库里状态
@@ -225,7 +225,7 @@ async def generate_progress(checklist_id: int, request: Request):
 
 @router.get("/checklist/list")
 async def list_checklists(request: Request):
-    await _require_admin(request)
+    await _require_login(request)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
@@ -238,7 +238,7 @@ async def list_checklists(request: Request):
 
 @router.get("/checklist/{checklist_id}")
 async def get_checklist(checklist_id: int, request: Request):
-    await _require_admin(request)
+    await _require_login(request)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT * FROM checklists WHERE id = ?", (checklist_id,))
@@ -287,7 +287,7 @@ async def _username(request: Request) -> str:
 
 @router.patch("/checklist/item/{item_id}")
 async def update_item(item_id: int, req: ItemUpdate, request: Request):
-    await _require_admin(request)
+    await _require_login(request)
     fields, vals = [], []
     for k in ("dimension", "stage", "team", "owner", "phenomenon", "cause", "handling", "suggestion", "timing"):
         v = getattr(req, k)
@@ -328,7 +328,7 @@ class ItemCreate(BaseModel):
 
 @router.post("/checklist/{checklist_id}/item")
 async def add_item(checklist_id: int, req: ItemCreate, request: Request):
-    await _require_admin(request)
+    await _require_login(request)
     if req.dimension not in DIMENSIONS:
         raise HTTPException(400, f"dimension 必须是六维度之一")
     stage = req.stage if req.stage in STAGES else "未分类"
@@ -348,7 +348,7 @@ async def add_item(checklist_id: int, req: ItemCreate, request: Request):
 
 @router.delete("/checklist/item/{item_id}")
 async def delete_item(item_id: int, request: Request):
-    await _require_admin(request)
+    await _require_login(request)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM checklist_items WHERE id = ?", (item_id,))
         await db.commit()
@@ -357,7 +357,7 @@ async def delete_item(item_id: int, request: Request):
 
 @router.delete("/checklist/{checklist_id}")
 async def delete_checklist(checklist_id: int, request: Request):
-    await _require_admin(request)
+    await _require_login(request)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM checklist_items WHERE checklist_id = ?", (checklist_id,))
         await db.execute("DELETE FROM checklists WHERE id = ?", (checklist_id,))
