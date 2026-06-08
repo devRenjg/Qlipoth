@@ -12,7 +12,12 @@
           placeholder="按标签筛选"
           style="width: 240px"
         >
-          <el-option v-for="t in tags" :key="t.id" :label="t.name" :value="t.id" />
+          <el-option
+            v-for="t in tagsByCount"
+            :key="t.id"
+            :label="`${t.name} (${t.doc_count})`"
+            :value="t.id"
+          />
         </el-select>
         <el-input v-model="filterText" placeholder="筛选文档..." style="width: 200px" clearable />
         <el-button v-if="isAdmin" @click="manageVisible = true">管理标签</el-button>
@@ -127,6 +132,9 @@ const isAdmin = computed(() => currentUser?.value?.role === 'admin')
 
 const documents = ref([])
 const tags = ref([])
+// 筛选下拉：按文档数降序（用户要求），并在选项上展示数字
+const tagsByCount = computed(() =>
+  [...tags.value].sort((a, b) => (b.doc_count || 0) - (a.doc_count || 0)))
 const loading = ref(false)
 const filterText = ref('')
 const filterTags = ref([])
