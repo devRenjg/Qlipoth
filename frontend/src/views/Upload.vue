@@ -176,7 +176,7 @@
       </h3>
       <div v-if="importHistory.length" class="history-list">
         <el-collapse>
-          <el-collapse-item v-for="record in importHistory" :key="record.id" :name="record.id">
+          <el-collapse-item v-for="record in pagedHistory" :key="record.id" :name="record.id">
             <template #title>
               <span class="history-title">{{ record.display_title || record.root_title }}</span>
               <el-tag size="small" type="success" style="margin-left: 8px;">成功 {{ record.counts ? record.counts.success : record.tree.filter(n => n.stored_as && n.stored_as !== '(已存在)' && !n.error).length }}</el-tag>
@@ -211,6 +211,17 @@
             </div>
           </el-collapse-item>
         </el-collapse>
+        <el-pagination
+          v-if="importHistory.length > historyPageSize"
+          class="history-pagination"
+          layout="prev, pager, next, total"
+          :total="importHistory.length"
+          :page-size="historyPageSize"
+          :current-page="historyPage"
+          @current-change="historyPage = $event"
+          background
+          small
+        />
       </div>
       <el-empty v-else-if="!loadingHistory" description="暂无导入记录" />
     </div>
@@ -237,6 +248,12 @@ const allTags = ref([])
 const importTree = ref([])
 const importHistory = ref([])
 const loadingHistory = ref(false)
+const historyPage = ref(1)
+const historyPageSize = ref(10)
+const pagedHistory = computed(() => {
+  const start = (historyPage.value - 1) * historyPageSize.value
+  return importHistory.value.slice(start, start + historyPageSize.value)
+})
 const failedImports = ref([])
 const loadingFailed = ref(false)
 const selectedFailed = ref([])
@@ -361,6 +378,7 @@ async function loadHistory() {
   try {
     const { data } = await axios.get('/api/upload/trees')
     importHistory.value = data
+    historyPage.value = 1
   } catch (err) {
     console.error('Failed to load history', err)
   } finally {
@@ -534,6 +552,7 @@ function updateFailedReason(id, reason) {
 .tree-parent { color: #909399; font-size: 12px; font-style: italic; }
 .tree-error { color: #f56c6c; font-size: 12px; }
 .history-section { margin-top: 40px; }
+.history-pagination { margin-top: 16px; display: flex; justify-content: flex-end; }
 .history-title { font-weight: 500; }
 .history-time { color: #909399; font-size: 12px; margin-left: auto; padding-right: 12px; }
 .retry-actions { margin-bottom: 16px; display: flex; gap: 8px; align-items: center; }
