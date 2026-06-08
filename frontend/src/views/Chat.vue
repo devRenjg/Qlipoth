@@ -41,22 +41,26 @@
           <h2>直播大型活动保障！有问必答！使命必达！</h2>
           <p class="subtitle">克里珀持续以光年级屏障隔绝威胁，维系现存世界的完整。</p>
           <div v-if="tags.length" class="tag-filter">
-            <span class="tag-filter-label">限定范围：</span>
-            <span
-              v-for="t in activityTags"
-              :key="t.id"
-              class="tag-chip tag-chip-activity"
-              :style="tagStyle(t)"
-              @click="toggleTag(t.id)"
-            >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
-            <span v-if="activityTags.length" class="tag-group-sep">·</span>
-            <span
-              v-for="t in topicTags"
-              :key="t.id"
-              class="tag-chip"
-              :style="tagStyle(t)"
-              @click="toggleTag(t.id)"
-            >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
+            <div v-if="activityTags.length" class="tag-row">
+              <span class="tag-filter-label">大型活动：</span>
+              <span
+                v-for="t in activityTags"
+                :key="t.id"
+                class="tag-chip tag-chip-activity"
+                :style="tagStyle(t)"
+                @click="toggleTag(t.id)"
+              >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
+            </div>
+            <div class="tag-row">
+              <span class="tag-filter-label">主题：</span>
+              <span
+                v-for="t in topicTags"
+                :key="t.id"
+                class="tag-chip"
+                :style="tagStyle(t)"
+                @click="toggleTag(t.id)"
+              >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
+            </div>
             <span v-if="selectedTagIds.length" class="tag-filter-hint">仅在选中标签的文档中检索</span>
           </div>
           <div class="center-input">
@@ -125,21 +129,24 @@
       <div v-if="messages.length > 0" class="chat-input">
         <div class="input-wrapper">
           <div v-if="tags.length" class="tag-filter tag-filter-compact">
-            <span
-              v-for="t in activityTags"
-              :key="t.id"
-              class="tag-chip tag-chip-activity"
-              :style="tagStyle(t)"
-              @click="toggleTag(t.id)"
-            >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
-            <span v-if="activityTags.length" class="tag-group-sep">·</span>
-            <span
-              v-for="t in topicTags"
-              :key="t.id"
-              class="tag-chip"
-              :style="tagStyle(t)"
-              @click="toggleTag(t.id)"
-            >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
+            <div v-if="activityTags.length" class="tag-row">
+              <span
+                v-for="t in activityTags"
+                :key="t.id"
+                class="tag-chip tag-chip-activity"
+                :style="tagStyle(t)"
+                @click="toggleTag(t.id)"
+              >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
+            </div>
+            <div class="tag-row">
+              <span
+                v-for="t in topicTags"
+                :key="t.id"
+                class="tag-chip"
+                :style="tagStyle(t)"
+                @click="toggleTag(t.id)"
+              >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
+            </div>
           </div>
           <el-input
             v-model="input"
@@ -409,10 +416,16 @@ async function scrollToBottom() {
   margin-top: 14px;
   margin-bottom: 20px;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.tag-row {
+  display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 8px;
   align-items: center;
+  gap: 8px;
 }
 .tag-filter-label { font-size: 13px; color: #888888; }
 .tag-filter-hint { font-size: 12px; color: #e6a23c; margin-left: 4px; width: 100%; text-align: center; }
@@ -440,8 +453,9 @@ async function scrollToBottom() {
 .tag-filter-compact {
   margin-top: 0;
   margin-bottom: 10px;
-  justify-content: flex-start;
+  align-items: flex-start;
 }
+.tag-filter-compact .tag-row { justify-content: flex-start; }
 .preset-tag {
   cursor: pointer;
   font-size: 14px;
