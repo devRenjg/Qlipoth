@@ -21,6 +21,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from config import load_settings          # noqa: E402
 from llm import chat_completion           # noqa: E402
+from eval.golden_meta import enrich, era_of, tags_of  # noqa: E402
 
 GOLDEN_PATH = Path(__file__).parent / "golden_set.json"
 
@@ -55,6 +56,16 @@ MAX_DOC_CHARS = 8000  # 每篇喂给 LLM 的最大字符,控制 token 成本
 def _list_docs() -> list[Path]:
     kb = Path(load_settings().knowledge_base_dir)
     return sorted(kb.glob("*.md"))
+
+
+def _filter_docs(docs: list[Path], era: str = "", tag: str = "") -> list[Path]:
+    """按活动期 / 标签筛选候选文档池（定向补题用）。"""
+    out = docs
+    if era:
+        out = [d for d in out if era_of(d.name) == era]
+    if tag:
+        out = [d for d in out if tag in tags_of(d.name)]
+    return out
 
 
 def _sample_docs(docs: list[Path], n: int, seed: int) -> list[Path]:
@@ -116,7 +127,6 @@ async def _gen_for_doc(doc: Path, per_doc: int, sem: asyncio.Semaphore) -> list[
     print(f"  [OK]  {doc.name} -> {len(out)} 题", flush=True)
     return out
 
-
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sample", type=int, default=8, help="抽样文档数")
@@ -124,11 +134,20 @@ async def main():
     ap.add_argument("--concurrency", type=int, default=4, help="并发数")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--append", action="store_true", help="追加到已有 golden_set")
+    ap.add_argument("--era", default="", help="只从该活动期文档出题(如 S15/赛事)")
+    ap.add_argument("--tag", default="", help="只从含该标签的文档出题(如 直播体验)")
+    ap.add_argument("--types", default="", help="逗号分隔限定出题类型(如 方案类,歧义类)")
     args = ap.parse_args()
 
+    if args.types:
+        want = [t.strip() for t in args.types.split(",") if t.strip()]
+        globals()["QUESTION_TYPES"] = [t for t in want if t in QUESTION_TYPES] or QUESTION_TYPES
+
     docs = _list_docs()
-    print(f"知识库文档总数: {len(docs)}")
-    picked = _sample_docs(docs, args.sample, args.seed)
+    pool = _filter_docs(docs, args.era, args.tag)
+    print(f"知识库文档总数: {len(docs)}；筛选后候选池: {len(pool)}"
+          f"（era={args.era or '全部'} tag={args.tag or '全部'}）")
+    picked = _sample_docs(pool, args.sample, args.seed)
     print(f"本次抽样: {len(picked)} 篇,每篇 {args.per_doc} 题,并发 {args.concurrency}")
 
     sem = asyncio.Semaphore(args.concurrency)
@@ -139,17 +158,30 @@ async def main():
     for r in results:
         questions.extend(r)
 
+    # 新题回填 tags/era 元数据
+    for q in questions:
+        meta = enrich(q.get("relevant_files", []))
+        q["tags"] = meta["tags"]
+        q["era"] = meta["era"]
+
     if args.append and GOLDEN_PATH.exists():
         existing = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
         seen = {q["question"] for q in existing}
+        # 旧题若缺 tags/era 也补齐
+        for q in existing:
+            if "tags" not in q or "era" not in q:
+                meta = enrich(q.get("relevant_files", []))
+                q.setdefault("tags", meta["tags"])
+                q.setdefault("era", meta["era"])
         questions = existing + [q for q in questions if q["question"] not in seen]
 
     # 编号
     for i, q in enumerate(questions, 1):
-        q_id = q.pop("id", None)  # 去掉旧 id 重排
-        q_with_id = {"id": i}
-        q_with_id.update(q)
-        questions[i - 1] = q_with_id
+        q.pop("id", None)  # 去掉旧 id 重排
+        ordered = {"id": i, "question": q["question"], "type": q["type"],
+                   "relevant_files": q["relevant_files"],
+                   "tags": q.get("tags", []), "era": q.get("era", "其他/通用")}
+        questions[i - 1] = ordered
 
     GOLDEN_PATH.write_text(
         json.dumps(questions, ensure_ascii=False, indent=2), encoding="utf-8"
