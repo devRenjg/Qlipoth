@@ -151,4 +151,16 @@ async def init_db():
             )
         except Exception:
             pass
+        # checklist_items 增量字段：阶段(排序)、团队/负责人(归属)、勾选追溯
+        for col, ddl in [
+            ("stage", "ALTER TABLE checklist_items ADD COLUMN stage TEXT"),
+            ("team", "ALTER TABLE checklist_items ADD COLUMN team TEXT"),
+            ("owner", "ALTER TABLE checklist_items ADD COLUMN owner TEXT"),
+            ("handled_by", "ALTER TABLE checklist_items ADD COLUMN handled_by TEXT"),
+            ("handled_at", "ALTER TABLE checklist_items ADD COLUMN handled_at TEXT"),
+        ]:
+            try:
+                await db.execute(ddl)
+            except Exception:
+                pass
         await db.commit()
