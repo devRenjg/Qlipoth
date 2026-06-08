@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
-from routes import upload, query, documents, openspec
+from routes import upload, query, documents, openspec, checklist
 from auth import router as auth_router
 
 
@@ -26,6 +26,7 @@ app.include_router(upload.router, prefix="/api")
 app.include_router(query.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
 app.include_router(openspec.router, prefix="/api")
+app.include_router(checklist.router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 
 
