@@ -41,29 +41,47 @@
         <span class="cl-act" :style="actStyle(activeChecklist.checklist.activity)">{{ activeChecklist.checklist.activity }}</span>
         <span class="detail-title">{{ activeChecklist.checklist.title }}</span>
         <span class="detail-prog">已处理 {{ activeChecklist.handled_count }}/{{ activeChecklist.item_count }}</span>
+        <el-radio-group v-model="filterMode" size="small" class="detail-filter">
+          <el-radio-button value="all">全部</el-radio-button>
+          <el-radio-button value="todo">未完成</el-radio-button>
+          <el-radio-button value="done">已完成</el-radio-button>
+        </el-radio-group>
+        <el-button size="small" text @click="toggleAll">{{ allCollapsed ? '全部展开' : '全部折叠' }}</el-button>
       </div>
-      <div v-for="dim in activeChecklist.dimensions" :key="dim" class="dim-group"
-           v-show="(activeChecklist.grouped[dim] || []).length">
-        <h3 class="dim-title">{{ dim }}<em>{{ (activeChecklist.grouped[dim] || []).length }}</em>
-          <el-button size="small" text @click="startAdd(dim)">+ 加一条</el-button>
-        </h3>
-        <div v-for="it in activeChecklist.grouped[dim]" :key="it.id"
-             class="item-card" :class="{ handled: it.handled }">
-          <el-checkbox :model-value="!!it.handled" @change="toggleHandled(it)" class="item-check" />
-          <div class="item-body">
-            <div class="item-row"><b>现象</b>{{ it.phenomenon || '—' }}</div>
-            <div class="item-row" v-if="it.cause"><b>原因</b>{{ it.cause }}</div>
-            <div class="item-row" v-if="it.handling"><b>当时处置</b>{{ it.handling }}</div>
-            <div class="item-row sugg" v-if="it.suggestion"><b>建议</b>{{ it.suggestion }}</div>
-            <div class="item-row timing" v-if="it.timing"><b>时点</b>{{ it.timing }}</div>
-            <div class="item-foot">
-              <span class="item-src" v-if="it.source_files">来源：{{ it.source_files }}</span>
-              <el-button size="small" text @click="startEdit(it)">编辑</el-button>
-              <el-button size="small" text type="danger" @click="removeItem(it)">删除</el-button>
+      <el-collapse v-model="openDims">
+        <el-collapse-item v-for="dim in activeChecklist.dimensions" :key="dim" :name="dim"
+                          v-show="visibleItems(dim).length || (activeChecklist.grouped[dim] || []).length">
+          <template #title>
+            <span class="dim-title">{{ dim }}</span>
+            <em class="dim-count">{{ visibleItems(dim).length }} 条</em>
+            <el-button size="small" text @click.stop="startAdd(dim)">+ 加一条</el-button>
+          </template>
+          <div v-for="it in visibleItems(dim)" :key="it.id"
+               class="item-card" :class="{ handled: it.handled }">
+            <el-checkbox :model-value="!!it.handled" @change="toggleHandled(it)" class="item-check" />
+            <div class="item-body">
+              <div class="item-tags">
+                <span class="stage-tag" v-if="it.stage">{{ it.stage }}</span>
+                <span class="own-tag" v-if="it.team || it.owner">
+                  {{ it.team }}<template v-if="it.team && it.owner"> · </template>{{ it.owner }}
+                </span>
+                <span class="own-tag own-empty" v-else @click="startEdit(it)">+ 标注归属</span>
+              </div>
+              <div class="item-row"><b>现象</b>{{ it.phenomenon || '—' }}</div>
+              <div class="item-row" v-if="it.cause"><b>原因</b>{{ it.cause }}</div>
+              <div class="item-row" v-if="it.handling"><b>当时处置</b>{{ it.handling }}</div>
+              <div class="item-row sugg" v-if="it.suggestion"><b>建议</b>{{ it.suggestion }}</div>
+              <div class="item-row timing" v-if="it.timing"><b>时点</b>{{ it.timing }}</div>
+              <div class="item-foot">
+                <span class="item-src" v-if="it.source_files">来源：{{ it.source_files }}</span>
+                <span class="item-handled" v-if="it.handled && it.handled_by">✓ {{ it.handled_by }} {{ it.handled_at }}</span>
+                <el-button size="small" text @click="startEdit(it)">编辑</el-button>
+                <el-button size="small" text type="danger" @click="removeItem(it)">删除</el-button>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        </el-collapse-item>
+      </el-collapse>
     </div>
 
     <!-- 编辑/新增条目弹窗 -->
@@ -74,6 +92,13 @@
             <el-option v-for="d in dimensions" :key="d" :label="d" :value="d" />
           </el-select>
         </el-form-item>
+        <el-form-item label="保障阶段">
+          <el-select v-model="editing.stage" style="width: 200px">
+            <el-option v-for="s in stages" :key="s" :label="s" :value="s" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="负责团队"><el-input v-model="editing.team" placeholder="不确定可留空" /></el-form-item>
+        <el-form-item label="负责人"><el-input v-model="editing.owner" placeholder="不确定可留空" /></el-form-item>
         <el-form-item label="现象"><el-input v-model="editing.phenomenon" type="textarea" :rows="2" /></el-form-item>
         <el-form-item label="原因"><el-input v-model="editing.cause" type="textarea" :rows="2" /></el-form-item>
         <el-form-item label="当时处置"><el-input v-model="editing.handling" type="textarea" :rows="2" /></el-form-item>
@@ -88,7 +113,7 @@
   </div>
 </template>
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   generateChecklist, getChecklistProgress, listChecklists, getChecklist,
@@ -98,6 +123,7 @@ import { colorForTag } from '../utils/tagColor.js'
 
 const activities = ['S赛', '跨晚', '春晚']
 const dimensions = ['高可用保障', '直播播放体验', '安全', '业务需求', '成本', '可复用沉淀']
+const stages = ['备战前期', '压测演练', '上线前', '活动当天', '活动后', '未分类']
 const genActivity = ref('')
 const generating = ref(false)
 const genProcessed = ref(0)
@@ -105,7 +131,23 @@ const genTotal = ref(0)
 const checklists = ref([])
 const loading = ref(false)
 const activeChecklist = ref(null)
+const filterMode = ref('all')
+const openDims = ref([])
 let pollTimer = null
+
+const allCollapsed = computed(() => openDims.value.length === 0)
+
+function visibleItems(dim) {
+  const items = (activeChecklist.value?.grouped[dim]) || []
+  if (filterMode.value === 'todo') return items.filter(i => !i.handled)
+  if (filterMode.value === 'done') return items.filter(i => i.handled)
+  return items
+}
+
+function toggleAll() {
+  if (openDims.value.length) openDims.value = []
+  else openDims.value = [...(activeChecklist.value?.dimensions || [])]
+}
 
 function actStyle(name) {
   const c = colorForTag(name)
@@ -159,6 +201,8 @@ async function openChecklist(id) {
   try {
     const { data } = await getChecklist(id)
     activeChecklist.value = data
+    // 默认展开所有有内容的维度（记住后续手动折叠状态）
+    openDims.value = data.dimensions.filter(d => (data.grouped[d] || []).length)
   } catch (e) { ElMessage.error('打开清单失败') }
 }
 
@@ -181,7 +225,12 @@ async function toggleHandled(it) {
   try {
     await updateChecklistItem(it.id, { handled: !!next })
     it.handled = next
+    if (!next) { it.handled_by = ''; it.handled_at = '' }
     activeChecklist.value.handled_count += next ? 1 : -1
+    // 拉取最新勾选追溯(谁/何时)
+    if (next) { const { data } = await getChecklist(activeChecklist.value.checklist.id);
+      const fresh = Object.values(data.grouped).flat().find(x => x.id === it.id)
+      if (fresh) { it.handled_by = fresh.handled_by; it.handled_at = fresh.handled_at } }
   } catch (e) { ElMessage.error('更新失败') }
 }
 
@@ -202,7 +251,8 @@ async function saveEdit() {
   try {
     if (e.id) {
       await updateChecklistItem(e.id, {
-        dimension: e.dimension, phenomenon: e.phenomenon, cause: e.cause,
+        dimension: e.dimension, stage: e.stage, team: e.team, owner: e.owner,
+        phenomenon: e.phenomenon, cause: e.cause,
         handling: e.handling, suggestion: e.suggestion, timing: e.timing,
       })
     } else {
@@ -244,6 +294,15 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 .detail-head { display: flex; align-items: center; gap: 12px; margin: 8px 0 20px; }
 .detail-title { font-size: 18px; font-weight: 600; }
 .detail-prog { margin-left: auto; color: #67c23a; font-size: 13px; }
+.detail-filter { margin-left: 12px; }
+.dim-title { font-size: 15px; font-weight: 600; }
+.dim-count { font-style: normal; color: #999; font-size: 12px; margin: 0 10px; }
+.item-tags { display: flex; gap: 8px; margin-bottom: 4px; align-items: center; }
+.stage-tag { font-size: 11px; background: #fff3e0; color: #e6792b; padding: 1px 8px; border-radius: 10px; }
+.own-tag { font-size: 11px; background: #eef2ff; color: #4d6bfe; padding: 1px 8px; border-radius: 10px; }
+.own-empty { background: transparent; color: #bbb; cursor: pointer; border: 1px dashed #ddd; }
+.own-empty:hover { color: #4d6bfe; border-color: #4d6bfe; }
+.item-handled { color: #67c23a; font-size: 12px; }
 .dim-group { margin-bottom: 26px; }
 .dim-title { font-size: 15px; border-left: 4px solid #4d6bfe; padding-left: 10px; display: flex; align-items: center; gap: 8px; }
 .dim-title em { font-style: normal; color: #999; font-size: 12px; }
