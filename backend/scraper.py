@@ -24,6 +24,49 @@ def validate_tencent_doc_url(url: str) -> bool:
         return False
 
 
+def _extract_tab_subid(url: str) -> str:
+    """从 smartsheet URL 提取 tab 参数（真正的数据表 subId）。无则空串。"""
+    try:
+        from urllib.parse import parse_qs
+        q = parse_qs(urlparse(url).query)
+        return (q.get("tab", [""])[0] or "").strip()
+    except Exception:
+        return ""
+
+
+def _extract_pad_id(url: str) -> str:
+    """从 URL 路径提取 padId，如 /smartsheet/s3_XXX -> s3_XXX。"""
+    try:
+        m = re.search(r"/(?:smartsheet|sheet|doc)/([A-Za-z0-9_]+)", urlparse(url).path)
+        return m.group(1) if m else ""
+    except Exception:
+        return ""
+
+
+async def _fetch_sheet_by_subid(page, pad_id: str, sub_id: str) -> dict | None:
+    """在页面上下文里主动请求指定 subId 的 sheet 数据(带登录态cookie)。
+
+    解决 smartsheet 内嵌/多表场景：前端默认加载的子表可能为空，
+    URL 的 tab 参数才是用户要看的数据表。带重试，应对页面 xsrf/登录态就绪时机。
+    """
+    if not pad_id or not sub_id:
+        return None
+    js = """async ([pad, sub]) => {
+      const u = `/dop-api/get/sheet?padId=${pad}&subId=${sub}&startrow=0&endrow=2000`;
+      try { const r = await fetch(u, {credentials:'include'}); return await r.json(); }
+      catch (e) { return null; }
+    }"""
+    for attempt in range(3):
+        try:
+            res = await page.evaluate(js, [pad_id, sub_id])
+        except Exception:
+            res = None
+        if res and res.get("retcode") == 0 and (res.get("data", {}).get("maxrow") or 0) > 0:
+            return res
+        await page.wait_for_timeout(2000)
+    return res if isinstance(res, dict) else None
+
+
 async def _wait_for_content(page, max_wait_ms: int = 15000) -> None:
     """Wait for doc body to finish loading.
 
@@ -52,6 +95,8 @@ async def scrape_tencent_doc(url: str, timeout_ms: int = 60000) -> tuple[str, st
     if not validate_tencent_doc_url(url):
         raise ValueError(f"不支持的链接，仅支持: {', '.join(ALLOWED_HOSTS)}")
 
+    tab_sub = _extract_tab_subid(url)      # 须在 sanitize 前取(sanitize 会丢弃 tab 参数)
+    pad_from_url = _extract_pad_id(url)
     url = _sanitize_doc_url(url)
     BROWSER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -93,6 +138,15 @@ async def scrape_tencent_doc(url: str, timeout_ms: int = 60000) -> tuple[str, st
             await _wait_for_content(page)
 
             data = captured.get("sheet") or captured.get("mind") or captured.get("doc")
+
+            # smartsheet：URL 的 tab 才是数据表，主动拉取(前端默认加载的子表常为空)
+            if tab_sub:
+                pad_id = pad_from_url or (data or {}).get("data", {}).get("globalPadId", "")
+                tab_data = await _fetch_sheet_by_subid(page, pad_id, tab_sub)
+                if tab_data and tab_data.get("retcode") == 0:
+                    td = tab_data.get("data", {})
+                    if (td.get("maxrow") or 0) > 0:
+                        data = tab_data
 
             if data is None:
                 body_text = await page.inner_text("body")
@@ -285,16 +339,115 @@ def _extract_mind_text(data: dict) -> str:
     return _convert_hyperlinks(text) if text else ""
 
 
-def _extract_smartsheet_text(data: dict) -> str:
-    """Extract smartsheet (智能表格) cell text.
+def _ss_cell_value(cv: dict, opt_map: dict) -> str:
+    """解析新版 smartsheet 单元格值，覆盖 文本/单选状态/日期/数字公式 等类型。"""
+    import datetime as _dt
+    if not isinstance(cv, dict):
+        return ""
+    # 富文本: key '1' = [{'1':'text','2':值}]
+    if isinstance(cv.get("1"), list):
+        parts = [x.get("2", "") for x in cv["1"] if isinstance(x, dict) and x.get("1") == "text"]
+        if any(parts):
+            return " ".join(p for p in parts if p)
+    # 单选/状态: key '17' = [optId]，经 opt_map 映射为标签
+    if isinstance(cv.get("17"), list):
+        return ",".join(opt_map.get(o, str(o)) for o in cv["17"])
+    # 日期: key '7' = [{'1': 毫秒时间戳}]
+    if isinstance(cv.get("7"), list):
+        out = []
+        for x in cv["7"]:
+            try:
+                ts = int(x["1"])
+                if ts > 1e11:  # 毫秒
+                    out.append(_dt.datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d"))
+            except Exception:
+                pass
+        if out:
+            return ",".join(out)
+    # 数字/公式: key '36'.'1' 是 JSON，data[].text
+    m36 = cv.get("36")
+    if isinstance(m36, dict) and isinstance(m36.get("1"), str):
+        try:
+            j = json.loads(m36["1"])
+            ds = j.get("data", [])
+            vals = [str(e.get("text", "")) for e in ds if e.get("text", "") != ""]
+            if vals:
+                return ",".join(vals)
+        except Exception:
+            pass
+    return ""
 
-    Structure: data.initialAttributedText.text[0].smartsheet is a base64 + zlib
-    compressed JSON blob. Cells appear as text fragments {"k1":"text","k2":<value>}
-    (or the reverse). We recursively collect every text fragment in document order.
+
+def _parse_smartsheet_v2(inner: dict) -> str:
+    """新版智能表格解析：列名在字段定义 '30'，行数据在 ss[0][1].c.2.1。输出 markdown 表格。
+
+    inner 为 initialAttributedText.text 解析出的 dict（含 max_row/max_col/smartsheet 等）。
     """
+    raw_ss = inner.get("smartsheet")
+    if not isinstance(raw_ss, str) or not raw_ss:
+        return ""
+    try:
+        ss = json.loads(raw_ss)
+    except json.JSONDecodeError:
+        return ""
+    if not (isinstance(ss, list) and ss and isinstance(ss[0], list) and len(ss[0]) >= 2):
+        return ""
+    meta = ss[0][0].get("c", {})
+    rowsc = ss[0][1].get("c", {})
+    fields = meta.get("3", {}).get("3", {})
+    if not fields:
+        return ""
+    # 字段名 + 选项标签映射
+    fname, opt_map = {}, {}
+    for fid, fdef in fields.items():
+        fname[fid] = fdef.get("30", fid)
+        for tv in fdef.values():
+            if isinstance(tv, dict) and isinstance(tv.get("3"), list):
+                for o in tv["3"]:
+                    if isinstance(o, dict) and "1" in o and "2" in o:
+                        opt_map[o["1"]] = o["2"]
+    cols = list(fname.values())
+    rows = rowsc.get("2", {}).get("1", {})
+    if not isinstance(rows, dict) or not rows:
+        return ""
+    out_rows = []
+    for _rid, rd in rows.items():
+        cells = rd.get("1", {}) if isinstance(rd, dict) else {}
+        if not isinstance(cells, dict):
+            continue
+        row = {fname.get(fid, fid): _ss_cell_value(cv, opt_map) for fid, cv in cells.items()}
+        if any(row.values()):
+            out_rows.append(row)
+    if not out_rows:
+        return ""
+    # 输出 markdown 表格
+    lines = ["| " + " | ".join(cols) + " |",
+             "| " + " | ".join("---" for _ in cols) + " |"]
+    for r in out_rows:
+        lines.append("| " + " | ".join((r.get(c, "") or "").replace("\n", " ").replace("|", "/") for c in cols) + " |")
+    return "\n".join(lines)
+
+
+def _extract_smartsheet_text(data: dict) -> str:
+    """Extract smartsheet (智能表格) cell text. 先试新版结构(v2)，再退回老版 blob 逻辑。"""
     d = data.get("data", data)
     iat = d.get("initialAttributedText", {})
     text_list = iat.get("text", [])
+    # 新版：text 本身是一个大 JSON 字符串(含 max_row/smartsheet)
+    if isinstance(text_list, str) and text_list.strip().startswith("{"):
+        try:
+            inner = json.loads(text_list)
+            v2 = _parse_smartsheet_v2(inner)
+            if v2:
+                return v2
+        except json.JSONDecodeError:
+            pass
+    # 新版变体：text[0] 是含 smartsheet 的 dict
+    if text_list and isinstance(text_list[0], dict) and "smartsheet" in text_list[0]:
+        v2 = _parse_smartsheet_v2(text_list[0])
+        if v2:
+            return v2
+    # ---- 老版逻辑回退 ----
     if not text_list or not isinstance(text_list[0], dict):
         return ""
     blob = text_list[0].get("smartsheet")
@@ -710,6 +863,8 @@ async def _extract_from_dom(page) -> str:
 
 async def _scrape_single_in_context(context, url: str, timeout_ms: int = 60000) -> dict:
     """Scrape a single doc using an existing browser context. Returns result dict."""
+    tab_sub = _extract_tab_subid(url)      # sanitize 前取 tab
+    pad_from_url = _extract_pad_id(url)
     url = _sanitize_doc_url(url)
     page = await context.new_page()
     captured = {}
@@ -740,6 +895,13 @@ async def _scrape_single_in_context(context, url: str, timeout_ms: int = 60000) 
 
         # Prefer sheet data for sheet URLs, mind for mind URLs, doc data for doc URLs
         data = captured.get("sheet") or captured.get("mind") or captured.get("doc")
+
+        # smartsheet：URL 的 tab 才是数据表，主动拉取(前端默认子表常为空)
+        if tab_sub:
+            pad_id = pad_from_url or (data or {}).get("data", {}).get("globalPadId", "")
+            tab_data = await _fetch_sheet_by_subid(page, pad_id, tab_sub)
+            if tab_data and tab_data.get("retcode") == 0 and (tab_data.get("data", {}).get("maxrow") or 0) > 0:
+                data = tab_data
 
         if data is None:
             body_text = await page.inner_text("body")

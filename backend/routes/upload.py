@@ -33,6 +33,16 @@ def _parse_tags(raw: str | list[str] | None) -> list[str]:
             items = s.split(",")
     return [str(t).strip() for t in items if str(t).strip()]
 
+
+# 活动维度标签：随导入树传递给所有子文档（同一棵树属于同一活动）
+ACTIVITY_TAGS = {"S赛", "跨晚", "春晚", "事故/故障"}
+
+
+def _activity_tags(tags: list[str] | None) -> list[str]:
+    """从用户手选标签里筛出活动维度标签，供子文档继承。"""
+    return [t for t in (tags or []) if t in ACTIVITY_TAGS]
+
+
 router = APIRouter(tags=["upload"])
 ALLOWED_EXTENSIONS = set(PARSERS.keys())
 _executor = ThreadPoolExecutor(max_workers=2)
@@ -224,8 +234,8 @@ async def upload_from_url(req: UrlImportRequest):
         )
 
         stored_name, doc_id = await _save_document(result["title"], content, result["url"], parent_title)
-        # 根文档(depth 0)用用户手填标签；子文档自动打标
-        doc_manual = req.tags if result["depth"] == 0 else None
+        # 根文档用全部手选标签；子文档继承活动标签(同树同活动)，主题标签按内容自动补
+        doc_manual = req.tags if result["depth"] == 0 else _activity_tags(req.tags)
         await tag_document(doc_id, result["title"], content, doc_manual)
         title_to_stored[result["url"]] = {"title": result["title"], "stored_as": stored_name}
 
@@ -371,9 +381,9 @@ async def upload_from_url_stream(req: UrlImportRequest):
                     await db.commit()
                     doc_id = cursor.lastrowid
 
-                # 根文档用用户手填标签，子文档自动打标；best-effort 不阻断导入
+                # 根文档用全部手选标签；子文档继承活动标签，主题标签按内容自动补
                 try:
-                    doc_manual = req.tags if result["depth"] == 0 else None
+                    doc_manual = req.tags if result["depth"] == 0 else _activity_tags(req.tags)
                     await tag_document(doc_id, result["title"], content, doc_manual)
                 except Exception:
                     pass

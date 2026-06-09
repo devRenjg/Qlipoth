@@ -1,9 +1,6 @@
-"""上传时的标签处理：手动标签落库 + 未提供时基于内容自动打标。
+"""上传时的标签处理：手动标签落库 + 基于内容自动打标（与离线复核同口径）。
 
-复用 auto_tag.py / tag_misc.py 验证过的两段式分类：
-  1) 7 个主题标签（多选，宁缺毋滥）
-  2) 若主题标签全空，再从 3 个运营标签里强制选 1 个
-
+单次 LLM 判定 10 个主题标签 + 事故/故障，手动标签(含活动标签 S赛/春晚)与自动标签合并。
 供 routes/upload.py 在文档入库后调用，best-effort：LLM 失败不影响导入本身。
 """
 import json
@@ -15,37 +12,30 @@ from searcher import read_file_content
 
 CONTENT_LIMIT = 6000
 
-TOPIC_SYSTEM = """你是知识库文档分类助手。给定一篇文档内容，从下面固定的标签集合中选出所有**确实贴合**该文档主题的标签，可多选，也可不选（宁缺毋滥，只在明显相关时才选）。
+TOPIC_SYSTEM = """你是知识库文档分类助手。给定一篇大型活动保障文档，从下面固定的标签集合中选出所有**确实贴合**的标签，可多选，宁缺毋滥（只在明显相关时才选）。
 
-标签集合及定义：
-- 业务需求：该文档主要描述一个业务功能或产品需求
-- 高可用保障：技术方案文档，面向高可用保障，如直播PCU、降级、限流、架构演进、压测、容灾等
-- 成本：与带宽、采购、服务器成本和预算相关，含技术/业务预算与第三方采购项
-- 安全：涉及审核、风控、技术安全、业务安全相关领域
-- 直播体验：涉及画质、清晰度、延迟、卡顿等播放体验相关的性能说明
-- 弹幕：涉及弹幕玩法、弹幕技术方案、弹幕业务需求
-- 红包：涉及发放红包的技术方案、业务需求、玩法等
+主题标签及定义：
+- 业务需求：描述业务功能或产品需求
+- 高可用保障：面向高可用的技术方案（PCU、降级、限流、架构演进、压测、容灾），以及流程/工具/机制类技术沉淀
+- 成本：带宽、采购、服务器成本和预算，含技术/业务预算与第三方采购
+- 安全：弹幕安全(审核/真实性/黑灰产/冲塔)、业务安全(风控/作弊/资损防护)、基础技术安全(攻击/防护)
+- 直播体验：画质、清晰度、延迟、卡顿、首帧等播放体验
+- 弹幕：弹幕玩法、弹幕技术方案、弹幕业务需求
+- 红包：红包发放的技术方案、业务需求、玩法
+- 模板与名单：导入/导出/批量模板、白名单、房间或账号列表、资源位表格、人员名单等纯数据物料
+- 项目管理：日报、周报、排期、进度同步、预演规划、rundown、研发汇总、QA摸排、问题记录等执行跟踪类
+- 接口与配置：接口协议/说明、配置方法、环境配置、接入文档、Mod说明、域名解析、埋点等技术参考
 
-返回严格的 JSON（不要 markdown 代码块）：
-{"tags": ["标签1", "标签2"], "reason": "一句话说明依据"}
+另外判断 incident：该文档是否记录了**重大事故/资损/严重故障/影响用户的线上问题**（从严，纯方案/需求/名单/排期不算）。
 
-规则：
-- tags 只能取自上面 7 个标签名，逐字匹配，不得新造标签。
-- 一篇文档可能命中多个标签（如既是业务需求又涉及红包）。
-- 若都不贴合，返回 {"tags": [], "reason": "..."}。"""
+返回严格 JSON（不要 markdown 代码块）：
+{"tags": ["项目管理"], "incident": false, "reason": "一句话依据"}
+规则：tags 只能取自上面 10 个标签名，逐字匹配；都不贴合返回 {"tags": [], "incident": false, "reason": "..."}。"""
 
-TOPIC_TAGS = {"业务需求", "高可用保障", "成本", "安全", "直播体验", "弹幕", "红包"}
-
-OP_SYSTEM = """你是知识库文档归类助手。下面这篇文档不属于具体业务/技术主题，而是一份操作或参考类文档。请从以下 3 个类别中选出**最贴合**的一个：
-
-- 模板与名单：各类导入/导出/批量模板、白名单、房间或账号列表、资源位表格、测试机统计等纯数据物料
-- 项目管理：日报、排期、进度同步、预演规划、rundown、研发汇总、测试信息、QA摸排、问题记录等执行与跟踪类
-- 接口与配置：接口协议/说明、配置方法/指南、环境配置、接入文档、Mod说明、域名解析、埋点/router等技术参考
-
-返回严格 JSON（不要 markdown）：{"tag": "类别名", "reason": "一句话依据"}
-规则：tag 必须逐字取自上面 3 个类别名之一，必须选一个最接近的，不得为空、不得新造。"""
-
-OP_TAGS = {"模板与名单", "项目管理", "接口与配置"}
+# 内容可自动判定的标签（10 主题 + 事故/故障）；活动标签 S赛/跨晚/春晚 不靠内容猜
+TOPIC_TAGS = {"业务需求", "高可用保障", "成本", "安全", "直播体验", "弹幕", "红包",
+              "模板与名单", "项目管理", "接口与配置"}
+INCIDENT_TAG = "事故/故障"
 
 
 def _parse_json(text: str) -> dict | None:
@@ -57,7 +47,10 @@ def _parse_json(text: str) -> dict | None:
 
 
 async def suggest_tags(name: str, content: str) -> list[str]:
-    """基于标题+内容推断标签名列表。失败返回 []（best-effort，不抛异常）。"""
+    """基于标题+内容一次性判定 10 主题标签 + 事故/故障。失败返回 []（best-effort）。
+
+    与离线复核(eval/recheck)同口径：单次 LLM 判全部主题 + incident，上传即一步到位。
+    """
     user = f"文档标题：{name}\n\n文档内容：\n{content[:CONTENT_LIMIT]}"
     try:
         text, _ = await chat_completion(
@@ -68,20 +61,9 @@ async def suggest_tags(name: str, content: str) -> list[str]:
         return []
     data = _parse_json(text) or {}
     tags = [t for t in data.get("tags", []) if t in TOPIC_TAGS]
-    if tags:
-        return tags
-
-    # 主题标签全空 → 退到运营标签强制选 1 个
-    try:
-        text, _ = await chat_completion(
-            [{"role": "system", "content": OP_SYSTEM}, {"role": "user", "content": user}],
-            temperature=0,
-        )
-    except Exception:  # noqa: BLE001
-        return []
-    data = _parse_json(text) or {}
-    tag = data.get("tag")
-    return [tag] if tag in OP_TAGS else []
+    if data.get("incident"):
+        tags.append(INCIDENT_TAG)
+    return tags
 
 
 async def _resolve_tag_ids(db: aiosqlite.Connection, names: list[str]) -> list[int]:
@@ -119,16 +101,17 @@ async def apply_tags(doc_id: int, tag_names: list[str]) -> list[str]:
 
 
 async def tag_document(doc_id: int, name: str, content: str, manual_tags: list[str] | None = None) -> list[str]:
-    """入库后给文档打标：有手动标签用手动；否则解析内容自动打标。Best-effort。
+    """入库后给文档打标：手动标签(如活动标签 S赛/春晚) 与 内容自动打标(主题标签) **合并**生效。
 
-    返回最终生效的标签名列表（供前端/日志展示）。
+    之前是"有手动就不自动"，导致带活动标签的文档拿不到主题标签、或子文档拿不到活动标签。
+    现在两者并集：手动指定的标签必打，同时按内容补主题标签。Best-effort。
+    返回最终生效的标签名列表。
     """
     manual = [t.strip() for t in (manual_tags or []) if t and t.strip()]
-    if manual:
-        return await apply_tags(doc_id, manual)
     if not content:
         content = read_file_content(name) or ""
     suggested = await suggest_tags(name, content)
-    if suggested:
-        return await apply_tags(doc_id, suggested)
+    final = list(dict.fromkeys(manual + suggested))  # 去重保序，手动优先
+    if final:
+        return await apply_tags(doc_id, final)
     return []
