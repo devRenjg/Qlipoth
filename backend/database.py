@@ -158,6 +158,8 @@ async def init_db():
             ("owner", "ALTER TABLE checklist_items ADD COLUMN owner TEXT"),
             ("handled_by", "ALTER TABLE checklist_items ADD COLUMN handled_by TEXT"),
             ("handled_at", "ALTER TABLE checklist_items ADD COLUMN handled_at TEXT"),
+            ("cross_from", "ALTER TABLE checklist_items ADD COLUMN cross_from TEXT"),
+            ("severity", "ALTER TABLE checklist_items ADD COLUMN severity TEXT"),
         ]:
             try:
                 await db.execute(ddl)

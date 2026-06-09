@@ -46,13 +46,18 @@
           <el-radio-button value="todo">未完成</el-radio-button>
           <el-radio-button value="done">已完成</el-radio-button>
         </el-radio-group>
+        <el-radio-group v-model="sevFilter" size="small" class="detail-filter">
+          <el-radio-button value="p0">只看P0</el-radio-button>
+          <el-radio-button value="p01">P0+P1</el-radio-button>
+          <el-radio-button value="all">全部</el-radio-button>
+        </el-radio-group>
         <el-button size="small" text @click="toggleAll">{{ allCollapsed ? '全部展开' : '全部折叠' }}</el-button>
       </div>
       <el-collapse v-model="openDims">
         <el-collapse-item v-for="dim in activeChecklist.dimensions" :key="dim" :name="dim"
                           v-show="visibleItems(dim).length || (activeChecklist.grouped[dim] || []).length">
           <template #title>
-            <span class="dim-title">{{ dim }}</span>
+            <span class="dim-title" :class="{ 'dim-incident': dim === '事故/故障' }">{{ dim === '事故/故障' ? '⚠ ' + dim : dim }}</span>
             <em class="dim-count">{{ visibleItems(dim).length }} 条</em>
             <el-button size="small" text @click.stop="startAdd(dim)">+ 加一条</el-button>
           </template>
@@ -61,7 +66,9 @@
             <el-checkbox :model-value="!!it.handled" @change="toggleHandled(it)" class="item-check" />
             <div class="item-body">
               <div class="item-tags">
+                <span class="sev-tag" :class="'sev-' + (it.severity || 'P2')">{{ it.severity || 'P2' }}</span>
                 <span class="stage-tag" v-if="it.stage">{{ it.stage }}</span>
+                <span class="cross-tag" v-if="it.cross_from">借鉴自 {{ it.cross_from }}</span>
                 <span class="own-tag" v-if="it.team || it.owner">
                   {{ it.team }}<template v-if="it.team && it.owner"> · </template>{{ it.owner }}
                 </span>
@@ -73,7 +80,8 @@
               <div class="item-row sugg" v-if="it.suggestion"><b>建议</b>{{ it.suggestion }}</div>
               <div class="item-row timing" v-if="it.timing"><b>时点</b>{{ it.timing }}</div>
               <div class="item-foot">
-                <span class="item-src" v-if="it.source_files">来源：{{ it.source_files }}</span>
+                <a class="item-src" v-if="it.source_url" :href="it.source_url" target="_blank" @click.stop>来源：{{ it.source_files }}</a>
+                <span class="item-src" v-else-if="it.source_files">来源：{{ it.source_files }}</span>
                 <span class="item-handled" v-if="it.handled && it.handled_by">✓ {{ it.handled_by }} {{ it.handled_at }}</span>
                 <el-button size="small" text @click="startEdit(it)">编辑</el-button>
                 <el-button size="small" text type="danger" @click="removeItem(it)">删除</el-button>
@@ -90,6 +98,11 @@
         <el-form-item label="维度">
           <el-select v-model="editing.dimension" style="width: 200px">
             <el-option v-for="d in dimensions" :key="d" :label="d" :value="d" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="严重度">
+          <el-select v-model="editing.severity" style="width: 200px">
+            <el-option v-for="s in ['P0','P1','P2']" :key="s" :label="s" :value="s" />
           </el-select>
         </el-form-item>
         <el-form-item label="保障阶段">
@@ -121,8 +134,9 @@ import {
 } from '../api/index.js'
 import { colorForTag } from '../utils/tagColor.js'
 
-const activities = ['S赛', '跨晚', '春晚']
-const dimensions = ['高可用保障', '直播播放体验', '安全', '业务需求', '成本', '可复用沉淀']
+// 跨晚生成暂不开放，先聚焦 S赛/春晚（已有跨晚清单仍可查看）
+const activities = ['S赛', '春晚']
+const dimensions = ['事故/故障', '高可用保障', '直播播放体验', '安全', '业务需求', '成本']
 const stages = ['备战前期', '压测演练', '上线前', '活动当天', '活动后', '未分类']
 const genActivity = ref('')
 const generating = ref(false)
@@ -132,15 +146,18 @@ const checklists = ref([])
 const loading = ref(false)
 const activeChecklist = ref(null)
 const filterMode = ref('all')
+const sevFilter = ref('p01')  // p0 / p01(默认,只看P0+P1) / all
 const openDims = ref([])
 let pollTimer = null
 
 const allCollapsed = computed(() => openDims.value.length === 0)
 
 function visibleItems(dim) {
-  const items = (activeChecklist.value?.grouped[dim]) || []
-  if (filterMode.value === 'todo') return items.filter(i => !i.handled)
-  if (filterMode.value === 'done') return items.filter(i => i.handled)
+  let items = (activeChecklist.value?.grouped[dim]) || []
+  if (filterMode.value === 'todo') items = items.filter(i => !i.handled)
+  else if (filterMode.value === 'done') items = items.filter(i => i.handled)
+  if (sevFilter.value === 'p0') items = items.filter(i => i.severity === 'P0')
+  else if (sevFilter.value === 'p01') items = items.filter(i => i.severity === 'P0' || i.severity === 'P1')
   return items
 }
 
@@ -242,7 +259,7 @@ function startEdit(it) {
   editVisible.value = true
 }
 function startAdd(dim) {
-  editing.value = { dimension: dim, phenomenon: '', cause: '', handling: '', suggestion: '', timing: '' }
+  editing.value = { dimension: dim, severity: 'P2', stage: '未分类', team: '', owner: '', phenomenon: '', cause: '', handling: '', suggestion: '', timing: '' }
   editVisible.value = true
 }
 
@@ -251,7 +268,7 @@ async function saveEdit() {
   try {
     if (e.id) {
       await updateChecklistItem(e.id, {
-        dimension: e.dimension, stage: e.stage, team: e.team, owner: e.owner,
+        dimension: e.dimension, severity: e.severity, stage: e.stage, team: e.team, owner: e.owner,
         phenomenon: e.phenomenon, cause: e.cause,
         handling: e.handling, suggestion: e.suggestion, timing: e.timing,
       })
@@ -299,6 +316,14 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 .dim-count { font-style: normal; color: #999; font-size: 12px; margin: 0 10px; }
 .item-tags { display: flex; gap: 8px; margin-bottom: 4px; align-items: center; }
 .stage-tag { font-size: 11px; background: #fff3e0; color: #e6792b; padding: 1px 8px; border-radius: 10px; }
+.sev-tag { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 10px; color: #fff; }
+.sev-P0 { background: #e63946; }
+.sev-P1 { background: #f59e0b; }
+.sev-P2 { background: #9aa0a6; }
+a.item-src { color: #409eff; text-decoration: none; }
+a.item-src:hover { text-decoration: underline; }
+.cross-tag { font-size: 11px; background: #ecf5ff; color: #409eff; padding: 1px 8px; border-radius: 10px; border: 1px solid #d0e6ff; }
+.dim-incident { color: #e63946; font-weight: 700; }
 .own-tag { font-size: 11px; background: #eef2ff; color: #4d6bfe; padding: 1px 8px; border-radius: 10px; }
 .own-empty { background: transparent; color: #bbb; cursor: pointer; border: 1px dashed #ddd; }
 .own-empty:hover { color: #4d6bfe; border-color: #4d6bfe; }
