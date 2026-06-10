@@ -44,10 +44,10 @@ def _now():
 
 EXTRACT_SYS = f"""你在为"大型直播活动保障"团队，从一篇历史活动文档中提炼"踩过的坑/教训/事故"，
 帮助下一届活动备战时主动规避。请把每一条归到下面六个维度之一：
-- 事故/故障：发生过的重大事故、资损、严重故障、影响用户的线上问题（最高优先级，凡"出过事"的归这里）
+- 事故/故障：发生过的重大事故、资损、严重故障、影响用户的线上问题。**判定优先级最高：只要造成了重大影响或资损，无论起因是攻击、bug、容量、还是依赖故障，都必须归到本维度，不要因为"起因是安全攻击"就归到安全维度。**
 - 高可用保障：能看能播、PCU、降级、限流、容灾、架构、压测；流程/工具/机制类技术沉淀也归这里
 - 直播播放体验：卡顿、延迟、清晰度、首帧、画质
-- 安全：弹幕安全(审核/真实性/黑灰产/冲塔)、业务安全(风控/作弊/资损防护)、基础技术安全(攻击/防护)——非常重要，凡涉及安全的务必归此维度，不可漏
+- 安全：弹幕安全(审核/真实性/黑灰产/冲塔)、业务安全(风控/作弊/资损防护)、基础技术安全(攻击/防护)。**仅当是安全防护措施/风险点、尚未酿成重大事故时归这里；一旦造成了重大故障或资损，归"事故/故障"。**
 - 业务需求：增长目标相关的功能/玩法需求层面的问题；运营/排期/项目协调类也归这里
 - 成本：带宽、采购、服务器预算（注意采购是否需要更早前置介入）
 
@@ -55,11 +55,11 @@ EXTRACT_SYS = f"""你在为"大型直播活动保障"团队，从一篇历史活
 "纯方案设想"当坑。若文档是纯方案/需求/名单类、没有实际踩坑内容，返回空数组。
 
 为每条标注：
-- severity 严重度：P0(重大事故/资损/严重故障) / P1(重要，需重点关注) / P2(一般改进项)
+- severity 严重度：P0(重大事故/资损/严重故障/大面积影响用户) / P1(重要，需重点关注) / P2(一般改进项)。**凡造成重大影响或资损的，一律 P0，不论起因。**
 - stage 保障周期阶段：备战前期 / 压测演练 / 上线前 / 活动当天 / 活动后；判不出填"未分类"
 - team 负责团队/业务线（流媒体、基架、弹幕、OTT/TV端、产品、研发、质量保障、直播体验、带宽/成本、安全 等），尽量填
 - owner 负责人：仅当出现**真实中文姓名**时填，脱敏ID(@eJP3类)、字体名、纯数字一律留空
-- cross_activity 是否跨活动通用：对其他大型活动(春晚/跨晚/S赛)也有借鉴价值则 true，纯本活动特有 false
+- cross_activity 是否跨活动通用：对其他大型活动(春晚/跨晚/S赛)也有借鉴价值则 true，纯本活动特有 false。**注意：凡是"事故/故障"维度的条目，一律填 true（重大事故是所有活动都必须警示借鉴的）。**
 
 返回严格 JSON（不要 markdown）：
 {{"items": [
@@ -204,12 +204,12 @@ async def _generate_task(activity: str, checklist_id: int):
         for it in own_items:
             it["cross_from"] = ""
 
-        # 跨活动借鉴：只保留 cross_activity=true，去重 + 每维度限额，避免灌水淹没本活动
+        # 跨活动借鉴：事故/故障维度必借(重大事故所有活动都该警示)，其余按 cross_activity + 去重 + 每维限额
         cross_raw = []
         for oa, rows in cross_docs.items():
             items = await _scan_docs(rows, kb, sem, prog, prog["total"])
             for it in items:
-                if it.get("cross_activity"):
+                if it.get("dimension") == "事故/故障" or it.get("cross_activity"):
                     it["cross_from"] = oa
                     cross_raw.append(it)
 
@@ -220,8 +220,10 @@ async def _generate_task(activity: str, checklist_id: int):
             key = (it["phenomenon"] or "")[:20]
             if key in seen:
                 continue
+            is_incident = it.get("dimension") == "事故/故障"
             n = per_dim.get(it["dimension"], 0)
-            if n >= CROSS_PER_DIM:
+            # 事故/故障不受每维限额约束(必须全部借鉴警示)
+            if not is_incident and n >= CROSS_PER_DIM:
                 continue
             seen.add(key)
             per_dim[it["dimension"]] = n + 1
