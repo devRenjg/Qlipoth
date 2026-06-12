@@ -199,7 +199,8 @@ async def get_document(doc_id: int):
 
 
 @router.delete("/documents/{doc_id}")
-async def delete_document(doc_id: int):
+async def delete_document(doc_id: int, request: Request):
+    await _require_admin(request)
     kb_dir = Path(load_settings().knowledge_base_dir)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

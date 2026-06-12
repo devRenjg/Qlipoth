@@ -3,7 +3,10 @@
     <h2>上传文档</h2>
     <p class="desc">将文档导入知识库，支持文件上传和腾讯文档链接导入</p>
 
-    <el-tabs v-model="activeTab" class="upload-tabs">
+    <el-alert v-if="!isAdmin" type="info" :closable="false" show-icon class="readonly-alert"
+      title="文档导入仅管理员可操作，你可以在下方查看导入历史。" />
+
+    <el-tabs v-if="isAdmin" v-model="activeTab" class="upload-tabs">
       <el-tab-pane label="文件上传" name="file">
         <p class="tab-desc">支持 Word (.docx)、Excel (.xlsx)、PPT (.pptx)、PDF (.pdf)、Markdown (.md)、文本 (.txt) 格式</p>
         <div class="tag-input-row">
@@ -99,7 +102,7 @@
         </div>
       </el-tab-pane>
 
-      <el-tab-pane :label="'失败重试 (' + failedImports.length + ')'" name="retry" v-if="currentUser?.role === 'admin'">
+      <el-tab-pane :label="'失败重试 (' + failedImports.length + ')'" name="retry" v-if="isAdmin">
         <p class="tab-desc">以下文档导入失败，可选择重试</p>
         <div class="retry-actions">
           <el-button type="primary" size="small" :loading="retrying" :disabled="!selectedFailed.length" @click="retrySelected">
@@ -240,6 +243,7 @@ import axios from 'axios'
 import { getTags } from '../api'
 
 const currentUser = inject('currentUser')
+const isAdmin = computed(() => currentUser?.value?.role === 'admin')
 
 const activeTab = ref('file')
 const uploadResults = ref([])

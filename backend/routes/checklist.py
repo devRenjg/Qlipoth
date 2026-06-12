@@ -226,16 +226,45 @@ def _all_docs_sql():
     )
 
 
-async def _require_login(request: Request):
-    """保障清单对所有登录用户开放（admin/super/user 均可查看与生成）。"""
+async def _require_login(request: Request) -> dict:
+    """保障清单对所有登录用户开放（均可查看与生成）。返回当前用户 {id, username, role}。"""
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         raise HTTPException(401, "未登录")
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT id FROM users WHERE token = ?", (token,))
-        if not await cur.fetchone():
+        cur = await db.execute("SELECT id, username, role FROM users WHERE token = ?", (token,))
+        row = await cur.fetchone()
+        if not row:
             raise HTTPException(401, "登录已失效")
+        return {"id": row["id"], "username": row["username"], "role": row["role"]}
+
+
+async def _require_checklist_owner(checklist_id: int, request: Request) -> dict:
+    """写操作鉴权：仅清单生成者本人可写（admin 也不例外）。返回当前用户。
+
+    用于删除/编辑/勾选/导出等所有写操作；非生成者只能读，写一律 403。
+    历史清单（created_by 为空、无归属）放开给所有登录用户，避免老数据没人能维护。
+    """
+    me = await _require_login(request)
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute("SELECT created_by FROM checklists WHERE id = ?", (checklist_id,))).fetchone()
+    if not row:
+        raise HTTPException(404, "清单不存在")
+    owner = row["created_by"] or ""
+    if owner and owner != me["username"]:
+        raise HTTPException(403, f"该清单由「{owner}」生成，你只能查看，不能修改")
+    return me
+
+
+async def _checklist_id_of_item(item_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute("SELECT checklist_id FROM checklist_items WHERE id = ?", (item_id,))).fetchone()
+    if not row:
+        raise HTTPException(404, "条目不存在")
+    return row["checklist_id"]
 
 
 async def _extract_from_doc(name: str, content: str, sem: asyncio.Semaphore) -> list[dict]:
@@ -388,19 +417,19 @@ class GenerateReq(BaseModel):
 
 @router.post("/checklist/generate")
 async def generate_checklist(req: GenerateReq, request: Request):
-    await _require_login(request)
+    me = await _require_login(request)
     if req.activity not in ACTIVITIES:
         raise HTTPException(400, f"activity 必须是 {ACTIVITIES} 之一")
     title = req.title or f"{req.activity} 备战踩坑清单"
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "INSERT INTO checklists (activity, title, status, created_at) VALUES (?,?,?,?)",
-            (req.activity, title, "generating", _now()))
+            "INSERT INTO checklists (activity, title, status, created_at, created_by) VALUES (?,?,?,?,?)",
+            (req.activity, title, "generating", _now(), me["username"]))
         await db.commit()
         checklist_id = cur.lastrowid
     _GEN_PROGRESS[checklist_id] = {"status": "generating", "total": 0, "processed": 0}
     asyncio.create_task(_generate_task(req.activity, checklist_id))
-    return {"id": checklist_id, "title": title, "status": "generating"}
+    return {"id": checklist_id, "title": title, "status": "generating", "created_by": me["username"]}
 
 
 @router.get("/checklist/generate/{checklist_id}/progress")
@@ -495,7 +524,8 @@ async def _username(request: Request) -> str:
 
 @router.patch("/checklist/item/{item_id}")
 async def update_item(item_id: int, req: ItemUpdate, request: Request):
-    await _require_login(request)
+    cid = await _checklist_id_of_item(item_id)
+    await _require_checklist_owner(cid, request)
     fields, vals = [], []
     for k in ("dimension", "severity", "stage", "team", "owner", "phenomenon", "cause", "handling", "suggestion", "timing"):
         v = getattr(req, k)
@@ -537,7 +567,7 @@ class ItemCreate(BaseModel):
 
 @router.post("/checklist/{checklist_id}/item")
 async def add_item(checklist_id: int, req: ItemCreate, request: Request):
-    await _require_login(request)
+    await _require_checklist_owner(checklist_id, request)
     if req.dimension not in DIMENSIONS:
         raise HTTPException(400, "dimension 必须是六维度之一")
     stage = req.stage if req.stage in STAGES else "未分类"
@@ -558,7 +588,8 @@ async def add_item(checklist_id: int, req: ItemCreate, request: Request):
 
 @router.delete("/checklist/item/{item_id}")
 async def delete_item(item_id: int, request: Request):
-    await _require_login(request)
+    cid = await _checklist_id_of_item(item_id)
+    await _require_checklist_owner(cid, request)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM checklist_items WHERE id = ?", (item_id,))
         await db.commit()
@@ -567,7 +598,7 @@ async def delete_item(item_id: int, request: Request):
 
 @router.delete("/checklist/{checklist_id}")
 async def delete_checklist(checklist_id: int, request: Request):
-    await _require_login(request)
+    await _require_checklist_owner(checklist_id, request)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM checklist_items WHERE checklist_id = ?", (checklist_id,))
         await db.execute("DELETE FROM checklists WHERE id = ?", (checklist_id,))
@@ -633,7 +664,7 @@ def _build_export_markdown(activity: str, title: str, items: list[dict]) -> str:
 
 @router.post("/checklist/{checklist_id}/export-wecom")
 async def export_checklist_to_wecom(checklist_id: int, req: ExportWecomReq, request: Request):
-    await _require_login(request)
+    await _require_checklist_owner(checklist_id, request)
     import wecom
 
     async with aiosqlite.connect(DB_PATH) as db:

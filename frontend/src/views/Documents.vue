@@ -45,7 +45,7 @@
           </template>
           <el-button v-else size="small" @click="viewDoc(row)">查看</el-button>
           <el-button v-if="isAdmin" size="small" @click="openTagDialog(row)">标签</el-button>
-          <el-button size="small" type="danger" @click="confirmDelete(row)">删除</el-button>
+          <el-button v-if="isAdmin" size="small" type="danger" @click="confirmDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

@@ -6,13 +6,14 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import aiosqlite
 from config import load_settings
 from parsers import parse_file, PARSERS, extract_owners
 from database import DB_PATH
+from auth import COOKIE_NAME
 from scraper import scrape_tencent_doc, scrape_tencent_doc_recursive, validate_tencent_doc_url
 from confluence import (
     scrape_confluence_recursive,
@@ -72,8 +73,21 @@ def _now_bj() -> str:
     return datetime.now(_BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
+async def _require_admin(request: Request):
+    """文档导入/删除仅管理员可操作。"""
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        raise HTTPException(401, "未登录")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute("SELECT role FROM users WHERE token = ?", (token,))).fetchone()
+    if not row or row["role"] != "admin":
+        raise HTTPException(403, "仅管理员可导入/删除文档")
+
+
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...), tags: str = Form(default="")):
+async def upload_file(request: Request, file: UploadFile = File(...), tags: str = Form(default="")):
+    await _require_admin(request)
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"不支持的文件格式: {ext}，支持: {', '.join(ALLOWED_EXTENSIONS)}")
@@ -185,7 +199,8 @@ def _run_scraper_recursive(url: str, max_depth: int) -> list[dict]:
 
 
 @router.post("/upload/url")
-async def upload_from_url(req: UrlImportRequest):
+async def upload_from_url(req: UrlImportRequest, request: Request):
+    await _require_admin(request)
     if req.max_depth < 0 or req.max_depth > 3:
         raise HTTPException(400, "递归层数范围为 0-3（0 表示不递归）")
 
@@ -301,7 +316,8 @@ async def upload_from_url(req: UrlImportRequest):
 
 
 @router.post("/upload/url/stream")
-async def upload_from_url_stream(req: UrlImportRequest):
+async def upload_from_url_stream(req: UrlImportRequest, request: Request):
+    await _require_admin(request)
     """SSE stream version of recursive URL import, pushing progress per document."""
     if req.max_depth < 0 or req.max_depth > 3:
         raise HTTPException(400, "递归层数范围为 0-3（0 表示不递归）")
@@ -805,7 +821,8 @@ def _tree_record(row) -> dict:
 
 
 @router.delete("/upload/trees/{tree_id}")
-async def delete_import_tree(tree_id: int):
+async def delete_import_tree(tree_id: int, request: Request):
+    await _require_admin(request)
     """Delete an import tree record and its associated documents."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -847,7 +864,8 @@ async def list_failed_imports():
 
 
 @router.delete("/upload/failed/{record_id}")
-async def delete_failed_import(record_id: int):
+async def delete_failed_import(record_id: int, request: Request):
+    await _require_admin(request)
     """Delete a failed import record."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM failed_imports WHERE id = ?", (record_id,))

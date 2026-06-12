@@ -28,8 +28,10 @@
           <span>{{ c.item_count }} 条踩坑</span>
           <span>已处理 {{ c.handled_count }}/{{ c.item_count }}</span>
           <span>源自 {{ c.source_doc_count }} 篇复盘</span>
+          <span v-if="c.created_by">生成者：{{ c.created_by }}</span>
           <span class="cl-time">{{ c.created_at }}</span>
-          <el-button size="small" type="danger" text @click.stop="removeChecklist(c.id)">删除</el-button>
+          <el-button v-if="canEditList(c)" size="small" type="danger" text @click.stop="removeChecklist(c.id)">删除</el-button>
+          <span v-else class="cl-readonly">仅查看</span>
         </div>
       </div>
     </div>
@@ -41,6 +43,7 @@
         <el-button text @click="closeChecklist">← 返回列表</el-button>
         <span class="cl-act" :style="actStyle(activeChecklist.checklist.activity)">{{ activeChecklist.checklist.activity }}</span>
         <span class="detail-title">{{ activeChecklist.checklist.title }}</span>
+        <span v-if="activeChecklist.checklist.created_by" class="detail-by">生成者：{{ activeChecklist.checklist.created_by }}</span>
         <span class="detail-prog">已处理 {{ activeChecklist.handled_count }}/{{ activeChecklist.item_count }}</span>
       </div>
       <!-- 第二行：筛选(左) + 操作(右) -->
@@ -59,9 +62,10 @@
         </div>
         <div class="toolbar-right">
           <el-button size="small" text @click="toggleAll">{{ allCollapsed ? '全部展开' : '全部折叠' }}</el-button>
-          <el-button size="small" :type="selectMode ? 'warning' : 'success'" plain @click="toggleSelectMode">
+          <el-button v-if="canEditActive" size="small" :type="selectMode ? 'warning' : 'success'" plain @click="toggleSelectMode">
             {{ selectMode ? '退出选择' : '选择导出' }}
           </el-button>
+          <span v-else class="readonly-tag" title="该清单由他人生成，你只能查看">👁 仅查看（{{ activeChecklist.checklist.created_by }} 生成）</span>
         </div>
       </div>
       <!-- 选择模式工具条 -->
@@ -89,12 +93,12 @@
           <template #title>
             <span class="dim-title" :class="{ 'dim-incident': dim === '事故/故障' }">{{ dim === '事故/故障' ? '⚠ ' + dim : dim }}</span>
             <em class="dim-count">{{ visibleItems(dim).length }} 条</em>
-            <el-button size="small" text @click.stop="startAdd(dim)">+ 加一条</el-button>
+            <el-button v-if="canEditActive" size="small" text @click.stop="startAdd(dim)">+ 加一条</el-button>
           </template>
           <div v-for="it in visibleItems(dim)" :key="it.id"
                class="item-card" :class="{ handled: it.handled, 'item-selected': selectMode && selectedIds.includes(it.id) }">
             <el-checkbox v-if="selectMode" :model-value="selectedIds.includes(it.id)" @change="toggleSelect(it)" class="item-check" />
-            <el-checkbox v-else :model-value="!!it.handled" @change="toggleHandled(it)" class="item-check" />
+            <el-checkbox v-else :model-value="!!it.handled" :disabled="!canEditActive" @change="toggleHandled(it)" class="item-check" />
             <div class="item-body">
               <div class="item-tags">
                 <span class="sev-tag" :class="'sev-' + (it.severity || 'P2')">{{ it.severity || 'P2' }}</span>
@@ -104,7 +108,7 @@
                 <span class="own-tag" v-if="it.team || it.owner">
                   {{ it.team }}<template v-if="it.team && it.owner"> · </template>{{ it.owner }}
                 </span>
-                <span class="own-tag own-empty" v-else @click="startEdit(it)">+ 标注归属</span>
+                <span class="own-tag own-empty" v-else-if="canEditActive" @click="startEdit(it)">+ 标注归属</span>
               </div>
               <div class="item-row"><b>现象</b>{{ it.phenomenon || '—' }}</div>
               <div class="item-row" v-if="it.cause"><b>原因</b>{{ it.cause }}</div>
@@ -115,8 +119,8 @@
                 <a class="item-src" v-if="it.source_url" :href="it.source_url" target="_blank" @click.stop>来源：{{ it.source_files }}</a>
                 <span class="item-src" v-else-if="it.source_files">来源：{{ it.source_files }}</span>
                 <span class="item-handled" v-if="it.handled && it.handled_by">✓ {{ it.handled_by }} {{ it.handled_at }}</span>
-                <el-button size="small" text @click="startEdit(it)">编辑</el-button>
-                <el-button size="small" text type="danger" @click="removeItem(it)">删除</el-button>
+                <el-button v-if="canEditActive" size="small" text @click="startEdit(it)">编辑</el-button>
+                <el-button v-if="canEditActive" size="small" text type="danger" @click="removeItem(it)">删除</el-button>
               </div>
             </div>
           </div>
@@ -158,7 +162,7 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, inject } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   generateChecklist, getChecklistProgress, listChecklists, getChecklist,
@@ -166,6 +170,17 @@ import {
   exportChecklistToWecom,
 } from '../api/index.js'
 import { colorForTag } from '../utils/tagColor.js'
+
+const currentUser = inject('currentUser')
+// 写权限：仅清单生成者本人可改（admin 也不例外）；无生成者(历史清单)放开给所有人
+function canEditList(cl) {
+  if (!cl) return false
+  const me = currentUser?.value
+  if (!me) return false
+  const owner = cl.created_by || ''
+  return !owner || owner === me.username
+}
+const canEditActive = computed(() => canEditList(activeChecklist.value?.checklist))
 
 // 跨晚生成暂不开放，先聚焦 S赛/春晚（已有跨晚清单仍可查看）
 const activities = ['S赛', '春晚']
@@ -394,6 +409,9 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 .detail-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0 14px; }
 .detail-title { font-size: 18px; font-weight: 600; }
 .detail-prog { margin-left: auto; color: #67c23a; font-size: 13px; }
+.detail-by { color: #909399; font-size: 13px; }
+.readonly-tag { color: #e6a23c; font-size: 13px; font-weight: 600; }
+.cl-readonly { color: #c0c4cc; font-size: 12px; }
 .detail-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 0 0 18px; padding: 10px 14px; background: #f7f9fc; border-radius: 8px; }
 .toolbar-left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .toolbar-right { display: flex; align-items: center; gap: 10px; }

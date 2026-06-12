@@ -126,7 +126,8 @@ async def init_db():
                 title TEXT NOT NULL,
                 status TEXT DEFAULT 'active',
                 source_doc_count INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT (datetime('now', '+8 hours'))
+                created_at TIMESTAMP DEFAULT (datetime('now', '+8 hours')),
+                created_by TEXT DEFAULT ''
             )
         """)
         await db.execute("""
