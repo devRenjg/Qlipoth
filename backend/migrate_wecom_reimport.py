@@ -24,8 +24,9 @@ from database import DB_PATH
 KB = os.path.join(os.path.dirname(__file__), "knowledge_base")
 OLD_DIR = os.path.join(os.path.dirname(__file__), "knowledge_base_old")
 _FAIL_FILE = os.path.join(os.path.dirname(__file__), ".reimport_fails.json")
+_LAST_BATCH_FILE = os.path.join(os.path.dirname(__file__), ".reimport_last_batch.json")
 _BJ = timezone(timedelta(hours=8))
-REQ_GAP = 8.0  # 每次读取后的间隔(秒)。企微限流较紧，串行+长间隔最稳（慢但避免触顶）
+REQ_GAP = 10.0  # 每次读取后的间隔(秒)。配额每天约20份，串行+10s间隔，跑满即停
 
 # protobuf/Playwright 噪声特征
 _GARBLE = [r"ra7v24", r"JZj", r"\*FF[0-9A-F]{6}", r"\\tdkey", r"MENTION_WXWORK",
@@ -153,6 +154,12 @@ async def _process_one(path: str, sem: asyncio.Semaphore, write: bool, backup_di
     # 保留原头部(标题/来源/负责人/父文档) + 新正文
     header = _header(old_md)
     new_md = header + "\n\n" + new_body if header else new_body
+    # P0: 表格行级摘要（LLM 理解表格含错乱竖排表，提升表格数据检索命中与LLM可读）
+    try:
+        from table_summary import append_table_summaries_llm
+        new_md, _ = await append_table_summaries_llm(new_md)
+    except Exception:
+        pass
 
     old_m = _metrics(old_md)
     new_m = _metrics(new_md)
@@ -259,6 +266,10 @@ async def main():
     if write:
         written = sum(1 for r in results if r.get("written"))
         print(f"  已替换写盘: {written} 篇，原文备份在 {backup_dir}", flush=True)
+        # 记录本批成功写盘的文件名，供后续"当天新增文档"评测使用
+        written_files = [r["file"] for r in results if r.get("written")]
+        last_batch = {"ts": ts, "files": written_files, "backup_dir": backup_dir}
+        json.dump(last_batch, open(_LAST_BATCH_FILE, "w", encoding="utf-8"), ensure_ascii=False)
 
     # 报告落盘
     report = os.path.join(os.environ.get("TEMP", "/tmp"), f"wecom_reimport_report_{ts}.json")

@@ -191,6 +191,7 @@
               <el-tag v-if="record.counts && record.counts.failed" size="small" type="danger" style="margin-left: 4px;">失败 {{ record.counts.failed }}</el-tag>
               <span class="history-time">{{ record.imported_at }}</span>
               <el-button
+                v-if="isAdmin"
                 size="small"
                 type="danger"
                 text
