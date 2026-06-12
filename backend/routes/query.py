@@ -49,6 +49,10 @@ class QueryResponse(BaseModel):
 
 MAX_CONTEXT_CHARS = 60000
 
+# 检索摘录优化开关（默认开）：True=按关键词密度优先摘录 + "摘要"块高优先级；
+# False=旧行为（按行号顺序摘录、摘要块不特殊优先）。仅供 A/B 评测对照临时关闭。
+_RETRIEVAL_OPT = True
+
 # 相关图片（方案A 画廊）：从被选入上下文的正文里收干净内容图，按相关文件位置关联。
 # 正则与前端 utils/markdown.js 的 IMG_PATTERNS 对齐：仅识别已知图床内容图，
 # 用干净边界（?w=&h=&type=image/ 或显式扩展名）砍掉 protobuf 残片乱码尾巴。
@@ -398,7 +402,8 @@ def _extract_relevant_sections(content: str, results: list, context_radius: int 
         sec_hits = [r for r in results if sec_start < r.line_number <= sec_end]
         if sec_hits:
             sec_title = lines[sec_start] if sec_start < total_lines else ""
-            is_summary = any(kw in sec_title for kw in ("统计", "总计", "汇总", "合计", "概览", "总结"))
+            _sum_kws = ("统计", "总计", "汇总", "合计", "概览", "总结", "摘要") if _RETRIEVAL_OPT else ("统计", "总计", "汇总", "合计", "概览", "总结")
+            is_summary = any(kw in sec_title for kw in _sum_kws)
             sections.append((sec_start, sec_end, sec_hits, is_summary))
 
     # Also include summary sections even without direct hits
@@ -406,7 +411,8 @@ def _extract_relevant_sections(content: str, results: list, context_radius: int 
         sec_start = section_starts[idx]
         sec_end = section_starts[idx + 1]
         sec_title = lines[sec_start] if sec_start < total_lines else ""
-        if any(kw in sec_title for kw in ("统计", "总计", "汇总", "合计", "概览", "总结")):
+        _sum_kws = ("统计", "总计", "汇总", "合计", "概览", "总结", "摘要") if _RETRIEVAL_OPT else ("统计", "总计", "汇总", "合计", "概览", "总结")
+        if any(kw in sec_title for kw in _sum_kws):
             already = any(s[0] == sec_start for s in sections)
             if not already:
                 sections.append((sec_start, sec_end, [], True))
@@ -438,7 +444,12 @@ def _extract_relevant_sections(content: str, results: list, context_radius: int 
         if len(sec_content) <= budget_per_section:
             chunk = f"[行 {sec_start+1}-{sec_end}]:\n{sec_content}"
         else:
-            hit_indices = sorted({r.line_number - 1 - sec_start for r in sec_hits})
+            # 每个命中行命中了哪些不同关键词（用于按"关键词密度"排优先级）
+            line_kws = {}
+            for r in sec_hits:
+                ln = r.line_number - 1 - sec_start
+                line_kws.setdefault(ln, set()).add(getattr(r, "matched_keyword", "") or "")
+            hit_indices = sorted(set(line_kws.keys()))
             ranges = []
             for hit in hit_indices:
                 # 命中落在表格内 → 纳入整张表；否则取 ±context_radius
@@ -453,18 +464,27 @@ def _extract_relevant_sections(content: str, results: list, context_radius: int 
                 else:
                     ranges.append((s, e))
 
-            sec_parts = []
+            # 预算紧张时按"覆盖的不同关键词数"降序优先（高密度命中行如表格摘要行先进上下文），
+            # 取够预算后再按原文顺序还原，保证可读。
+            def _range_score(rng):
+                kws = set()
+                for ln, ks in line_kws.items():
+                    if rng[0] <= ln < rng[1]:
+                        kws |= ks
+                return len([k for k in kws if k])
+            ordered = sorted(ranges, key=_range_score, reverse=True) if _RETRIEVAL_OPT else list(ranges)
+            chosen = []
             sec_chars = 0
-            for s, e in ranges:
-                snippet = "\n".join(sec_lines[s:e])
+            for rng in ordered:
+                snippet = "\n".join(sec_lines[rng[0]:rng[1]])
                 if sec_chars + len(snippet) > budget_per_section:
-                    remaining = budget_per_section - sec_chars
-                    if remaining > 100:
-                        sec_parts.append(snippet[:remaining] + "\n...(截断)")
-                        sec_chars += remaining
-                    break
-                sec_parts.append(snippet)
+                    if not chosen:  # 至少保一段（截断）
+                        chosen.append((rng, snippet[:budget_per_section] + "\n...(截断)"))
+                    continue
+                chosen.append((rng, snippet))
                 sec_chars += len(snippet)
+            chosen.sort(key=lambda x: x[0][0])  # 还原文档顺序
+            sec_parts = [c[1] for c in chosen]
             chunk = f"[行 {sec_start+1}+ 摘录]:\n" + "\n...\n".join(sec_parts)
 
         if total_chars + len(chunk) > max_chars:
