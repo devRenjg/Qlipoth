@@ -18,3 +18,4 @@ app.db
 *.db
 backend/eval/reports/_baseline_grep_cache.json
 .img_cache/
+backend/.reimport_last_batch.json

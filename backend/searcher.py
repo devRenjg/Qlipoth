@@ -40,6 +40,14 @@ def _expand_keywords(keywords: list[str]) -> list[str]:
     expanded = []
     seen = set()
     for kw in keywords:
+        # 健壮性：LLM 偶尔把关键词返回成 dict/list，统一强制为字符串，避免 .strip() 崩溃
+        if not isinstance(kw, str):
+            if isinstance(kw, dict):
+                kw = str(kw.get("keyword") or kw.get("word") or "")
+            elif isinstance(kw, (list, tuple)):
+                kw = " ".join(str(x) for x in kw)
+            else:
+                kw = str(kw)
         kw = kw.strip()
         if not kw or kw in seen:
             continue
@@ -143,12 +151,22 @@ class SearchResults(list):
 
 
 def grep_search(keywords: list[str], file_pattern: str = "*", context_lines: int = 3) -> "SearchResults":
+    # 健壮性：把关键词统一强制为非空字符串（LLM 偶尔返回 dict/list/嵌套）
+    def _as_str(k):
+        if isinstance(k, str):
+            return k
+        if isinstance(k, dict):
+            return str(k.get("keyword") or k.get("word") or "")
+        if isinstance(k, (list, tuple)):
+            return " ".join(str(x) for x in k)
+        return str(k)
+    keywords = [s for s in (_as_str(k).strip() for k in (keywords or [])) if s]
     results = []
     kb_dir = _get_kb_dir()
     kb_path = Path(kb_dir)
     if not kb_path.exists():
         out = SearchResults()
-        out.original_keywords = [k.strip() for k in keywords if k.strip()]
+        out.original_keywords = list(keywords)
         out.keyword_df = {}
         return out
 
