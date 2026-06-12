@@ -166,3 +166,6 @@ export function deleteChecklistItem(itemId) {
 export function deleteChecklist(id) {
   return api.delete(`/checklist/${id}`)
 }
+export function exportChecklistToWecom(id, itemIds, title) {
+  return api.post(`/checklist/${id}/export-wecom`, { item_ids: itemIds || [], title: title || null }, { timeout: 120000 })
+}

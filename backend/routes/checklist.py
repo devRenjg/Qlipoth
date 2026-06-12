@@ -34,6 +34,11 @@ REVIEW_KEYWORDS = ("复盘", "总结", "问题", "故障")
 CONTENT_LIMIT = 8000
 CROSS_PER_DIM = 10  # 跨活动借鉴每维度最多保留条数，防止灌水淹没本活动
 
+# 抽取用模型与并发：默认空=用 settings.llm_model（opus，质量最高但慢）。
+# 批量重建场景可在运行前覆盖为更快的模型并提高并发，把数百篇文档压到可接受时间。
+EXTRACT_MODEL = ""          # 空 → settings.llm_model
+EXTRACT_CONCURRENCY = 4     # _generate_task 抽取并发度
+
 # 生成任务的内存进度（checklist 生成是低频长任务，前端轮询）
 _GEN_PROGRESS: dict = {}
 
@@ -53,6 +58,10 @@ EXTRACT_SYS = f"""你在为"大型直播活动保障"团队，从一篇历史活
 
 只提炼文档中**确实发生过的问题/故障/事故/教训/改进项**，不要编造、不要把"做得好的地方"或
 "纯方案设想"当坑。若文档是纯方案/需求/名单类、没有实际踩坑内容，返回空数组。
+
+**数据务必带上**：文档里出现的具体数据(PCU/在线人数峰值、QPS、带宽峰值、影响时长、资损金额、
+错误率、延迟、压测量级、扩容倍数、时间点等)，**直接写进 phenomenon 或 suggestion 文字里**，
+不要丢。例如"决赛 PCU 达 620w 超预期 20%，触发限流"而非笼统的"在线人数超预期"。
 
 为每条标注：
 - severity 严重度：P0(重大事故/资损/严重故障/大面积影响用户) / P1(重要，需重点关注) / P2(一般改进项)。**凡造成重大影响或资损的，一律 P0，不论起因。**
@@ -77,6 +86,115 @@ def _clean_owner(name: str) -> str:
     if not re.search(r"[一-鿿]", name) or len(name) > 8:
         return ""
     return name
+
+
+def _dedup_key(it: dict) -> str:
+    """同一事件的归一化指纹：去标点/空白/数字后取现象前缀，让"同一坑不同措辞/不同数据"归并。"""
+    import re as _re
+    text = (it.get("phenomenon") or "") + (it.get("cause") or "")
+    norm = _re.sub(r"[\s\d，。、；：,.;:!?？！（）()\[\]【】\"'`~\-—_/\\]+", "", text)
+    return norm[:28]
+
+
+def _dedup_items(items: list[dict]) -> list[dict]:
+    """全清单级查重（文本指纹兜底版）：同指纹只保留最值得留的一条。
+
+    指纹相对保守（同事件不同措辞可能漏并），主去重交给 _llm_dedup_items；本函数
+    作为 LLM 失败时的兜底，至少把"逐字接近"的重复合并掉。
+    """
+    sev_rank = {"P0": 0, "P1": 1, "P2": 2}
+
+    def completeness(it: dict) -> int:
+        return sum(len(it.get(f) or "") for f in ("phenomenon", "cause", "handling", "suggestion"))
+
+    def better(a: dict, b: dict) -> dict:
+        a_own = 0 if not a.get("cross_from") else 1
+        b_own = 0 if not b.get("cross_from") else 1
+        ka = (a_own, sev_rank.get(a.get("severity", "P2"), 9), -completeness(a))
+        kb = (b_own, sev_rank.get(b.get("severity", "P2"), 9), -completeness(b))
+        return a if ka <= kb else b
+
+    best: dict[str, dict] = {}
+    for it in items:
+        key = _dedup_key(it)
+        if not key:
+            key = f"__empty__{id(it)}"
+        if key not in best:
+            best[key] = it
+            continue
+        keep = better(best[key], it)
+        drop = it if keep is best[key] else best[key]
+        if not keep.get("owner") and drop.get("owner"):
+            keep["owner"] = drop["owner"]
+        if not keep.get("team") and drop.get("team"):
+            keep["team"] = drop["team"]
+        best[key] = keep
+    return list(best.values())
+
+
+DEDUP_SYS = """你在给"大型直播活动保障"的踩坑清单做查重。下面是一批已编号的踩坑条目（每条只给现象+原因摘要）。
+请找出其中**指向同一个事件/同一个坑**的条目，把它们归为一组（哪怕措辞、数据、详略不同，只要是同一件事就算重复）。
+判定要谨慎：只有确实是同一事件才归并；相似主题但不同具体事件（如"第一轮压测告警"和"第二轮压测告警"是两件事）不要合并。
+
+返回严格 JSON（不要 markdown）：
+{"groups": [[1, 5, 9], [3, 12]]}
+groups 里每个子数组是一组重复条目的编号（至少2个才列出）；没有任何重复就返回 {"groups": []}。只输出 JSON。"""
+
+
+async def _llm_dedup_items(items: list[dict]) -> list[dict]:
+    """LLM 语义查重：把指向同一事件的条目合并，一个事件只保留一条。
+
+    保留规则同 _dedup_items（本活动>跨活动、P0>P1>P2、字段更全），并把被淘汰条目
+    的非空 owner/team 补到留下的那条。LLM 失败则回退到 _dedup_items 文本兜底。
+    """
+    if len(items) < 2:
+        return items
+    sev_rank = {"P0": 0, "P1": 1, "P2": 2}
+
+    def completeness(it: dict) -> int:
+        return sum(len(it.get(f) or "") for f in ("phenomenon", "cause", "handling", "suggestion"))
+
+    def pick(group: list[int]) -> int:
+        # 从一组重复里挑最该保留的下标
+        def k(idx):
+            it = items[idx]
+            own = 0 if not it.get("cross_from") else 1
+            return (own, sev_rank.get(it.get("severity", "P2"), 9), -completeness(it))
+        return min(group, key=k)
+
+    lines = []
+    for i, it in enumerate(items):
+        ph = (it.get("phenomenon") or "").replace("\n", " ")[:60]
+        ca = (it.get("cause") or "").replace("\n", " ")[:30]
+        lines.append(f"{i}. 现象:{ph} | 原因:{ca}")
+    user = "\n".join(lines)
+
+    try:
+        txt, _ = await llm.chat_completion(
+            [{"role": "system", "content": DEDUP_SYS}, {"role": "user", "content": user}],
+            temperature=0, model=load_settings().llm_model)
+        txt = txt.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        groups = json.loads(txt).get("groups", [])
+    except Exception:  # noqa: BLE001
+        return _dedup_items(items)
+
+    drop_idx: set[int] = set()
+    for group in groups:
+        group = [g for g in group if isinstance(g, int) and 0 <= g < len(items)]
+        if len(group) < 2:
+            continue
+        keep = pick(group)
+        for idx in group:
+            if idx == keep:
+                continue
+            # 归属补全
+            if not items[keep].get("owner") and items[idx].get("owner"):
+                items[keep]["owner"] = items[idx]["owner"]
+            if not items[keep].get("team") and items[idx].get("team"):
+                items[keep]["team"] = items[idx]["team"]
+            drop_idx.add(idx)
+
+    return [it for i, it in enumerate(items) if i not in drop_idx]
 
 
 def _review_docs_sql():
@@ -127,7 +245,7 @@ async def _extract_from_doc(name: str, content: str, sem: asyncio.Semaphore) -> 
         try:
             txt, _ = await llm.chat_completion(
                 [{"role": "system", "content": EXTRACT_SYS}, {"role": "user", "content": user}],
-                temperature=0, model=load_settings().llm_model)
+                temperature=0, model=EXTRACT_MODEL or load_settings().llm_model)
         except Exception:  # noqa: BLE001
             return []
     txt = txt.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
@@ -184,7 +302,7 @@ async def _generate_task(activity: str, checklist_id: int):
     prog = _GEN_PROGRESS[checklist_id]
     try:
         kb = load_settings().knowledge_base_dir
-        sem = asyncio.Semaphore(4)
+        sem = asyncio.Semaphore(EXTRACT_CONCURRENCY)
 
         # ① 本活动全文档扫描
         all_sql, _ = _all_docs_sql()
@@ -230,6 +348,11 @@ async def _generate_task(activity: str, checklist_id: int):
             cross_items.append(it)
 
         all_items = own_items + cross_items
+
+        # 全清单级查重：一个事件只出现一次（LLM 语义判同，跨维度/跨文档/跨活动统一去重）
+        before = len(all_items)
+        all_items = await _llm_dedup_items(all_items)
+        prog["deduped"] = before - len(all_items)
 
         # 排序：维度(事故置顶) → 严重度(P0先) → 保障阶段(先发生在前)
         dim_order = {d: i for i, d in enumerate(DIMENSIONS)}
@@ -329,13 +452,14 @@ async def get_checklist(checklist_id: int, request: Request):
                 url_map[r["original_name"]] = r["source_url"]
     for it in items:
         it["source_url"] = url_map.get(it.get("source_files") or "", "")
-    # 按维度分组，组内按 严重度(P0先) → 保障阶段(先发生在前) 排序
+    # 按维度分组，组内按 严重度(P0先) → 当天发生(优先) → 保障阶段(先发生在前) 排序
     sev_order = {s: i for i, s in enumerate(SEVERITIES)}
     grouped = {d: [] for d in DIMENSIONS}
     for it in items:
         grouped.setdefault(it["dimension"], []).append(it)
     for d in grouped:
         grouped[d].sort(key=lambda x: (sev_order.get(x.get("severity") or "P2", 9),
+                                       0 if x.get("day_late") else 1,
                                        STAGE_ORDER.get(x.get("stage") or "未分类", 99),
                                        x.get("sort_order", 0)))
     return {"checklist": dict(cl), "dimensions": DIMENSIONS, "stages": STAGES,
@@ -450,3 +574,127 @@ async def delete_checklist(checklist_id: int, request: Request):
         await db.commit()
     _GEN_PROGRESS.pop(checklist_id, None)
     return {"message": "已删除"}
+
+
+# ---------------------------------------------------------------------------
+# 导出为企业微信在线文档（Markdown + 复选框 Checklist）
+# ---------------------------------------------------------------------------
+
+class ExportWecomReq(BaseModel):
+    item_ids: list[int] = []   # 选中的条目；空=导出全部
+    title: str | None = None   # 可选自定义文档标题
+
+
+def _build_export_markdown(activity: str, title: str, items: list[dict]) -> str:
+    """把清单条目按六维度组织成带复选框的 Markdown。"""
+    dim_order = {d: i for i, d in enumerate(DIMENSIONS)}
+    sev_order = {s: i for i, s in enumerate(SEVERITIES)}
+    items = sorted(items, key=lambda x: (
+        dim_order.get(x.get("dimension"), 99),
+        sev_order.get(x.get("severity") or "P2", 9),
+        0 if x.get("day_late") else 1,
+        STAGE_ORDER.get(x.get("stage") or "未分类", 99),
+        x.get("sort_order", 0),
+    ))
+    total = len(items)
+    p0 = sum(1 for it in items if (it.get("severity") == "P0"))
+    daylate = sum(1 for it in items if it.get("day_late"))
+    by_dim: dict[str, list[dict]] = {}
+    for it in items:
+        by_dim.setdefault(it.get("dimension") or "未分类", []).append(it)
+
+    lines = [f"# {title}", ""]
+    summary = f"> 共 {total} 条 · P0 {p0} 条 · ⚠当天发生 {daylate} 条 · 来源活动：{activity}"
+    lines += [summary, ""]
+
+    for dim in DIMENSIONS:
+        group = by_dim.get(dim)
+        if not group:
+            continue
+        head = ("## ⚠ " + dim) if dim == "事故/故障" else ("## " + dim)
+        lines += [head, ""]
+        for it in group:
+            check = "x" if it.get("handled") else " "
+            sev = it.get("severity") or "P2"
+            badge = f"{sev}"
+            if it.get("day_late"):
+                badge += "·当天发生"
+            owner_team = "/".join([x for x in [it.get("team") or "", it.get("owner") or ""] if x])
+            cross = f"（借鉴自{it['cross_from']}）" if it.get("cross_from") else ""
+            phen = (it.get("phenomenon") or "").replace("\n", " ").strip()
+            tail = f" — 负责：{owner_team}" if owner_team else ""
+            lines.append(f"- [{check}] 【{badge}】{phen}{cross}{tail}")
+            sugg = (it.get("suggestion") or "").replace("\n", " ").strip()
+            if sugg:
+                lines.append(f"    - 建议：{sugg}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+@router.post("/checklist/{checklist_id}/export-wecom")
+async def export_checklist_to_wecom(checklist_id: int, req: ExportWecomReq, request: Request):
+    await _require_login(request)
+    import wecom
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cl = await (await db.execute("SELECT * FROM checklists WHERE id = ?", (checklist_id,))).fetchone()
+        if not cl:
+            raise HTTPException(404, "清单不存在")
+        cl = dict(cl)
+        if req.item_ids:
+            qmarks = ",".join("?" * len(req.item_ids))
+            rows = await (await db.execute(
+                f"SELECT * FROM checklist_items WHERE checklist_id = ? AND id IN ({qmarks}) ORDER BY sort_order, id",
+                [checklist_id, *req.item_ids])).fetchall()
+        else:
+            rows = await (await db.execute(
+                "SELECT * FROM checklist_items WHERE checklist_id = ? ORDER BY sort_order, id",
+                (checklist_id,))).fetchall()
+        items = [dict(r) for r in rows]
+
+    if not items:
+        raise HTTPException(400, "没有可导出的条目")
+
+    activity = cl.get("activity") or ""
+    base_title = req.title or f"{activity} 备战踩坑清单 · 导出 {_now()[:10]}"
+
+    # Windows 命令行单参数上限 ~32000 字符。edit_doc_content 的内容要 JSON 编码后
+    # 作为命令行参数传入（换行/引号会转义膨胀），故按"编码后 payload 长度"切分，
+    # 而非 markdown 字数。edit_doc_content 是覆写不能追加，超限只能切成多个文档。
+    import json as _json
+    MAX_PAYLOAD = 22000  # node 直调无 cmd 限制；阈值留余量防企微单文档内容上限
+
+    def _payload_len(its: list[dict]) -> int:
+        md = _build_export_markdown(activity, base_title, its)
+        return len(_json.dumps({"docid": "x" * 100, "content": md, "content_type": 1}, ensure_ascii=False))
+
+    batches: list[list[dict]] = []
+    cur: list[dict] = []
+    for it in items:
+        if cur and _payload_len(cur + [it]) > MAX_PAYLOAD:
+            batches.append(cur)
+            cur = [it]
+        else:
+            cur.append(it)
+    if cur:
+        batches.append(cur)
+
+    docs = []
+    try:
+        for idx, batch in enumerate(batches):
+            title = base_title if len(batches) == 1 else f"{base_title}（{idx + 1}/{len(batches)}）"
+            md = _build_export_markdown(activity, title, batch)
+            result = await wecom.create_doc_with_content(title, md)
+            docs.append({"url": result["url"], "docid": result["docid"], "count": len(batch), "title": title})
+    except wecom.WecomError as e:
+        raise HTTPException(502, f"导出到企业微信失败：{e}")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"导出异常：{type(e).__name__}: {e}")
+
+    # 兼容前端：单文档时保持原字段，多文档时返回 docs 列表
+    first = docs[0]
+    return {
+        "url": first["url"], "docid": first["docid"], "title": first["title"],
+        "count": len(items), "doc_count": len(docs), "docs": docs,
+    }

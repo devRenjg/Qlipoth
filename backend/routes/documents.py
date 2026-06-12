@@ -1,5 +1,8 @@
 from pathlib import Path
+from urllib.parse import urlparse, unquote
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response, FileResponse
+import httpx
 from pydantic import BaseModel
 import aiosqlite
 from config import load_settings, save_settings
@@ -8,6 +11,98 @@ from auth import COOKIE_NAME
 from searcher import read_file_content
 
 router = APIRouter(tags=["documents"])
+
+# wiki.example.com 图片需要登录态 cookie，浏览器直连会被重定向到登录页。
+# 这里做一个服务端代理：带 cookie 取图后回传，前端图片改指向本代理。
+# 取过的图缓存到本地磁盘，避免同一篇文档反复打开时重复回源（120 张图反复
+# 取会把单 worker 的 uvicorn 占满，表现为「服务卡死」）。
+_INFO_IMG_HOSTS = {"wiki.example.com"}
+_IMG_CONTENT_TYPES = ("image/",)
+_IMG_CACHE_DIR = Path(__file__).resolve().parent.parent / ".img_cache"
+
+
+def _img_cache_path(target: str) -> Path:
+    import hashlib
+    h = hashlib.sha1(target.encode("utf-8")).hexdigest()
+    return _IMG_CACHE_DIR / h
+
+
+def _ext_to_media(suffix: str) -> str:
+    return {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+    }.get(suffix.lower(), "application/octet-stream")
+
+
+@router.get("/documents/img-proxy")
+async def proxy_info_image(url: str):
+    """Fetch an wiki.example.com image server-side (with cookie) and return it.
+
+    Disk-cached; only whitelisted hosts are proxied (not an open proxy).
+    """
+    target = unquote(url)
+    host = urlparse(target).hostname
+    if host not in _INFO_IMG_HOSTS:
+        raise HTTPException(400, "仅支持代理 wiki.example.com 图片")
+
+    # 1. 命中本地缓存 → 直接返回，不回源
+    cache_path = _img_cache_path(target)
+    if cache_path.exists():
+        suffix = Path(urlparse(target).path).suffix
+        return Response(
+            content=cache_path.read_bytes(),
+            media_type=_ext_to_media(suffix),
+            headers={"Cache-Control": "public, max-age=604800"},
+        )
+
+    # 2. 回源取图（cookie 读取已带缓存，开销可忽略）
+    try:
+        from confluence import _get_cookie
+        cookie = _get_cookie()
+    except Exception:
+        cookie = ""
+
+    try:
+        async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=30) as client:
+            resp = await client.get(target, headers={"Cookie": cookie} if cookie else {})
+    except Exception as e:
+        raise HTTPException(502, f"取图失败: {type(e).__name__}")
+
+    ctype = resp.headers.get("content-type", "")
+    if resp.status_code != 200 or not ctype.startswith(_IMG_CONTENT_TYPES):
+        # 多半是 cookie 失效被重定向到登录页
+        raise HTTPException(502, "图片不可用（可能 info 登录态已失效）")
+
+    # 落盘缓存
+    try:
+        _IMG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_path.write_bytes(resp.content)
+    except Exception:
+        pass
+
+    return Response(
+        content=resp.content,
+        media_type=ctype,
+        headers={"Cache-Control": "public, max-age=604800"},
+    )
+
+
+# 企微文档导入时从 base64 落地的本地图片，按 hash 文件名存于 backend/kb_images/
+_KB_IMAGES_DIR = Path(__file__).resolve().parent.parent / "kb_images"
+_IMG_MEDIA = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+              ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp", ".svg": "image/svg+xml"}
+
+
+@router.get("/documents/kb-image/{name}")
+async def get_kb_image(name: str):
+    """服务企微文档落地的本地图片。文件名是内容 hash + 扩展名，防目录穿越。"""
+    safe = Path(name).name  # 去掉任何路径成分
+    fpath = _KB_IMAGES_DIR / safe
+    if not fpath.exists() or not fpath.is_file():
+        raise HTTPException(404, "图片不存在")
+    media = _IMG_MEDIA.get(fpath.suffix.lower(), "application/octet-stream")
+    return FileResponse(str(fpath), media_type=media, headers={"Cache-Control": "public, max-age=604800"})
+
 
 
 async def _require_admin(request: Request):
@@ -47,11 +142,24 @@ async def list_documents():
 @router.get("/documents/view/{file_name:path}")
 async def view_document_by_file(file_name: str):
     """View document content rendered as HTML with markdown styling."""
+    return _render_md_html(file_name, read_file_content(file_name))
+
+
+@router.get("/documents/view-old/{file_name:path}")
+async def view_old_document(file_name: str):
+    """查看企微重导前的旧版本（存于 knowledge_base_old/）。"""
+    old_dir = Path(load_settings().knowledge_base_dir).parent / "knowledge_base_old"
+    fpath = old_dir / Path(file_name).name
+    if not fpath.exists():
+        raise HTTPException(404, "无旧版本")
+    return _render_md_html(Path(file_name).name + "（旧版·重导前）", fpath.read_text(encoding="utf-8"))
+
+
+def _render_md_html(title_src: str, content: str):
     from fastapi.responses import HTMLResponse
-    content = read_file_content(file_name)
     if not content:
         raise HTTPException(404, "文档不存在")
-    title = file_name.replace(".md", "")
+    title = title_src.replace(".md", "")
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -62,6 +170,7 @@ async def view_document_by_file(file_name: str):
 <style>
 body {{ max-width: 900px; margin: 40px auto; padding: 0 20px; background: #fff; }}
 .markdown-body {{ font-size: 15px; line-height: 1.7; }}
+.markdown-body img {{ max-width: 100%; height: auto; }}
 </style>
 </head>
 <body>

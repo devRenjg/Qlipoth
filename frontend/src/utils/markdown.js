@@ -42,5 +42,16 @@ export function renderMarkdown(text) {
     md = `${text}\n\n## 文档图片（${images.length}）\n\n${block}\n`
   }
   const raw = marked.parse(md)
-  return DOMPurify.sanitize(raw, { ADD_ATTR: ['target', 'rel'] })
+  const safe = DOMPurify.sanitize(raw, { ADD_ATTR: ['target', 'rel'] })
+  return rewriteInfoImages(safe)
 }
+
+// wiki.example.com 图片需要登录态，浏览器直连会被重定向到登录页而加载失败。
+// 把这些图片改指向后端代理（后端带 cookie 取图后回传）。
+function rewriteInfoImages(html) {
+  return html.replace(
+    /(<img\b[^>]*\bsrc=)(["'])(https?:\/\/info\.example\.co\/[^"']+)\2/gi,
+    (_m, pre, q, url) => `${pre}${q}/api/documents/img-proxy?url=${encodeURIComponent(url)}${q}`
+  )
+}
+

@@ -1,8 +1,9 @@
 import shutil
 import asyncio
 import json
+import re
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
@@ -13,7 +14,25 @@ from config import load_settings
 from parsers import parse_file, PARSERS, extract_owners
 from database import DB_PATH
 from scraper import scrape_tencent_doc, scrape_tencent_doc_recursive, validate_tencent_doc_url
+from confluence import (
+    scrape_confluence_recursive,
+    validate_confluence_url,
+    ConfluenceAuthError,
+)
 from tagger import tag_document
+
+
+def _url_kind(url: str) -> str | None:
+    """Classify an import URL. Returns 'tencent', 'confluence', or None."""
+    if validate_tencent_doc_url(url):
+        return "tencent"
+    if validate_confluence_url(url):
+        return "confluence"
+    return None
+
+
+# 在线文档来源标签：用于 documents.original_name 后缀与提示文案
+_SOURCE_NAME = {"tencent": "腾讯文档", "confluence": "Confluence"}
 
 
 def _parse_tags(raw: str | list[str] | None) -> list[str]:
@@ -122,9 +141,18 @@ class UrlImportRequest(BaseModel):
 
 
 def _normalize_url(url: str) -> str:
-    """Normalize URL for dedup: strip query params that don't identify the doc."""
+    """Normalize URL for dedup: strip query params that don't identify the doc.
+
+    Confluence pages are identified by pageId, which lives in the query string
+    (…/pages/viewpage.action?pageId=NNN). Stripping the whole query would
+    collapse every Confluence page to the same key, so we keep pageId for those.
+    """
     parsed = urlparse(url)
-    return f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
+    base = f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
+    qs = parse_qs(parsed.query)
+    if "pageId" in qs and qs["pageId"]:
+        return f"{base}?pageId={qs['pageId'][0]}"
+    return base
 
 
 async def _is_url_imported(url: str) -> bool:
@@ -161,10 +189,14 @@ async def upload_from_url(req: UrlImportRequest):
     if req.max_depth < 0 or req.max_depth > 3:
         raise HTTPException(400, "递归层数范围为 0-3（0 表示不递归）")
 
-    if not validate_tencent_doc_url(req.url):
-        raise HTTPException(400, "不支持的链接，仅支持腾讯文档/企业微信文档（docs.qq.com / doc.weixin.qq.com）")
+    kind = _url_kind(req.url)
+    if kind is None:
+        raise HTTPException(400, "不支持的链接，仅支持腾讯文档/企业微信文档（docs.qq.com / doc.weixin.qq.com）或 Confluence（wiki.example.com）")
 
     loop = asyncio.get_event_loop()
+
+    if kind == "confluence":
+        return await _import_confluence_batch(req)
 
     if not req.recursive:
         if await _is_url_imported(req.url):
@@ -273,8 +305,13 @@ async def upload_from_url_stream(req: UrlImportRequest):
     """SSE stream version of recursive URL import, pushing progress per document."""
     if req.max_depth < 0 or req.max_depth > 3:
         raise HTTPException(400, "递归层数范围为 0-3（0 表示不递归）")
-    if not validate_tencent_doc_url(req.url):
-        raise HTTPException(400, "不支持的链接，仅支持腾讯文档/企业微信文档（docs.qq.com / doc.weixin.qq.com）")
+
+    kind = _url_kind(req.url)
+    if kind is None:
+        raise HTTPException(400, "不支持的链接，仅支持腾讯文档/企业微信文档（docs.qq.com / doc.weixin.qq.com）或 Confluence（wiki.example.com）")
+
+    if kind == "confluence":
+        return await _stream_confluence_import(req)
 
     # max_depth=0 时不递归，父文档已导入则直接拒绝
     if not req.recursive:
@@ -467,6 +504,183 @@ async def upload_from_url_stream(req: UrlImportRequest):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+async def _stream_confluence_import(req: "UrlImportRequest"):
+    """SSE import for an wiki.example.com page and ALL its descendant pages.
+
+    Confluence exposes a real page tree, so depth is ignored — we always fetch
+    the root plus every descendant. Reuses the same落盘/写库/打标/导入树 path
+    as the Tencent flow.
+    """
+    progress_queue = asyncio.Queue()
+    main_loop = asyncio.get_event_loop()
+
+    def _run():
+        loop = asyncio.new_event_loop()
+
+        async def _inner():
+            documents, failed, skipped = [], [], []
+            title_to_stored: dict[str, dict] = {}
+
+            async def ingest(result: dict):
+                if result["error"]:
+                    failed.append(result)
+                    async with aiosqlite.connect(DB_PATH) as db:
+                        await db.execute(
+                            "INSERT INTO failed_imports (url, title, error, parent_url, depth, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                            (result["url"], result.get("title", ""), result["error"], result.get("parent_url"), result.get("depth", 0), _now_bj()),
+                        )
+                        await db.commit()
+                    main_loop.call_soon_threadsafe(progress_queue.put_nowait, {
+                        "type": "progress",
+                        "data": {"status": "failed", "title": result.get("title") or result["url"], "depth": result["depth"], "url": result["url"], "error": result["error"]},
+                    })
+                    return
+
+                norm = _normalize_url(result["url"])
+                async with aiosqlite.connect(DB_PATH) as db:
+                    cursor = await db.execute("SELECT id FROM documents WHERE source_url = ?", (norm,))
+                    already = await cursor.fetchone()
+                if already:
+                    skipped.append(result)
+                    title_to_stored[result["url"]] = {"title": result["title"], "stored_as": "(已存在)"}
+                    main_loop.call_soon_threadsafe(progress_queue.put_nowait, {
+                        "type": "progress",
+                        "data": {"status": "skipped", "title": result["title"], "depth": result["depth"], "url": result["url"], "reason": "已导入"},
+                    })
+                    return
+
+                parent_url = result.get("parent_url")
+                parent_title = title_to_stored.get(parent_url, {}).get("title") if parent_url else None
+                content = _build_markdown_with_relations(result["title"], result["content"], result["url"], parent_title, [])
+                stored_name, doc_id = await _save_document(result["title"], content, result["url"], parent_title, source="confluence")
+
+                try:
+                    doc_manual = req.tags if result["depth"] == 0 else _activity_tags(req.tags)
+                    await tag_document(doc_id, result["title"], content, doc_manual)
+                except Exception:
+                    pass
+
+                title_to_stored[result["url"]] = {"title": result["title"], "stored_as": stored_name}
+                documents.append({
+                    "title": result["title"], "stored_as": stored_name,
+                    "depth": result["depth"], "url": result["url"],
+                    "children": result.get("children", []), "parent": parent_title,
+                    "parent_url": parent_url, "error": None,
+                })
+                main_loop.call_soon_threadsafe(progress_queue.put_nowait, {
+                    "type": "progress",
+                    "data": {"status": "success", "title": result["title"], "depth": result["depth"], "url": result["url"], "stored_as": stored_name},
+                })
+
+            # scrape_confluence_recursive is sync (REST API); run it in this
+            # worker thread, then ingest each result in order.
+            try:
+                from confluence import scrape_confluence_recursive as _scrape
+                results = _scrape(req.url)
+            except ConfluenceAuthError as e:
+                main_loop.call_soon_threadsafe(progress_queue.put_nowait, {"type": "error", "data": {"error": str(e)}})
+                return
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                main_loop.call_soon_threadsafe(progress_queue.put_nowait, {"type": "error", "data": {"error": f"{type(e).__name__}: {str(e)}"}})
+                return
+
+            for result in results:
+                await ingest(result)
+
+            all_entries = []
+            for doc in documents:
+                all_entries.append({k: doc.get(k) for k in ("title", "stored_as", "depth", "url", "children", "parent", "parent_url")} | {"error": None})
+            for r in skipped:
+                all_entries.append({"title": r.get("title", ""), "stored_as": "(已存在)", "depth": r["depth"], "url": r["url"], "children": r.get("children", []), "parent": title_to_stored.get(r.get("parent_url"), {}).get("title"), "parent_url": r.get("parent_url"), "error": None})
+            for r in failed:
+                all_entries.append({"title": r.get("title", ""), "stored_as": None, "depth": r["depth"], "url": r["url"], "children": [], "parent": title_to_stored.get(r.get("parent_url"), {}).get("title"), "parent_url": r.get("parent_url"), "error": r["error"]})
+
+            root_title = title_to_stored.get(req.url, {}).get("title") or "未知"
+            all_entries.sort(key=lambda x: x["depth"])
+            if all_entries:
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute(
+                        "INSERT INTO import_trees (root_url, root_title, tree_data, doc_count, imported_at) VALUES (?, ?, ?, ?, ?)",
+                        (req.url, root_title, json.dumps(all_entries, ensure_ascii=False), len(all_entries), _now_bj()),
+                    )
+                    await db.commit()
+
+            main_loop.call_soon_threadsafe(progress_queue.put_nowait, {
+                "type": "done",
+                "data": {"message": "导入完成", "total": len(all_entries), "success": len(documents), "failed": len(failed), "skipped": len(skipped)},
+            })
+
+        try:
+            loop.run_until_complete(_inner())
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            main_loop.call_soon_threadsafe(progress_queue.put_nowait, {"type": "error", "data": {"error": f"{type(e).__name__}: {str(e)}"}})
+        finally:
+            loop.close()
+
+    async def event_generator():
+        _executor.submit(_run)
+        while True:
+            msg = await progress_queue.get()
+            yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            if msg["type"] in ("done", "error"):
+                break
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+async def _import_confluence_batch(req: "UrlImportRequest"):
+    """Non-stream JSON import of a Confluence page + all descendants."""
+    loop = asyncio.get_event_loop()
+    try:
+        from confluence import scrape_confluence_recursive as _scrape
+        results = await loop.run_in_executor(_executor, _scrape, req.url)
+    except ConfluenceAuthError as e:
+        raise HTTPException(403, str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"抓取失败: {type(e).__name__}: {str(e)}")
+
+    documents, failed, skipped = [], [], []
+    title_to_stored: dict[str, dict] = {}
+
+    for result in results:
+        if result["error"]:
+            failed.append({"url": result["url"], "error": result["error"], "depth": result["depth"]})
+            continue
+        if await _is_url_imported(result["url"]):
+            skipped.append({"url": result["url"], "title": result["title"], "depth": result["depth"], "reason": "已导入"})
+            title_to_stored[result["url"]] = {"title": result["title"], "stored_as": "(已存在)"}
+            continue
+
+        parent_url = result.get("parent_url")
+        parent_title = title_to_stored.get(parent_url, {}).get("title") if parent_url else None
+        content = _build_markdown_with_relations(result["title"], result["content"], result["url"], parent_title, [])
+        stored_name, doc_id = await _save_document(result["title"], content, result["url"], parent_title, source="confluence")
+        doc_manual = req.tags if result["depth"] == 0 else _activity_tags(req.tags)
+        await tag_document(doc_id, result["title"], content, doc_manual)
+        title_to_stored[result["url"]] = {"title": result["title"], "stored_as": stored_name}
+        documents.append({
+            "title": result["title"], "stored_as": stored_name, "depth": result["depth"],
+            "url": result["url"], "children": result.get("children", []), "parent": parent_title, "error": None,
+        })
+
+    all_entries = documents + [{"title": s["title"], "stored_as": "(已存在)", "depth": s["depth"], "url": s["url"], "children": [], "parent": None, "error": None} for s in skipped]
+    root_title = title_to_stored.get(req.url, {}).get("title", "未知")
+    await _save_import_tree(req.url, root_title, all_entries)
+
+    msg_parts = [f"成功 {len(documents)} 个"]
+    if skipped:
+        msg_parts.append(f"跳过 {len(skipped)} 个(已存在)")
+    if failed:
+        msg_parts.append(f"失败 {len(failed)} 个")
+    return {"message": f"导入完成，{'，'.join(msg_parts)}", "documents": documents, "total": len(documents), "failed": failed, "skipped": skipped}
+
+
 def _build_markdown_with_relations(
     title: str, text: str, url: str, parent_title: str | None, child_titles: list[str]
 ) -> str:
@@ -482,22 +696,34 @@ def _build_markdown_with_relations(
     return header + text
 
 
-async def _save_document(title: str, content: str, url: str, parent_title: str | None) -> tuple[str, int]:
+def _safe_filename(title: str) -> str:
+    """Sanitize a doc title into a single-segment filename stem.
+
+    Confluence titles may contain path separators and other characters illegal
+    in Windows filenames (e.g. "S14业务降级/预案汇总"), which would otherwise be
+    interpreted as nested directories or fail the write. Replace them with '_'.
+    """
+    stem = re.sub(r'[\\/:*?"<>|\r\n\t]', "_", title).strip().strip(".")
+    return stem or "未命名"
+
+
+async def _save_document(title: str, content: str, url: str, parent_title: str | None, source: str = "tencent") -> tuple[str, int]:
     kb_dir = Path(load_settings().knowledge_base_dir)
     kb_dir.mkdir(parents=True, exist_ok=True)
 
-    stored_name = f"{title}.md"
+    safe = _safe_filename(title)
+    stored_name = f"{safe}.md"
     stored_path = kb_dir / stored_name
     counter = 1
     while stored_path.exists():
-        stored_name = f"{title}_{counter}.md"
+        stored_name = f"{safe}_{counter}.md"
         stored_path = kb_dir / stored_name
         counter += 1
 
     stored_path.write_text(content, encoding="utf-8")
     file_size = stored_path.stat().st_size
 
-    source_label = f"{title} (腾讯文档)"
+    source_label = f"{title} ({_SOURCE_NAME.get(source, '在线文档')})"
     if parent_title:
         source_label += f" [子文档 of {parent_title}]"
 

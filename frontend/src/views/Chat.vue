@@ -263,7 +263,7 @@ async function sendMessage() {
   const question = input.value.trim()
   if (!question || loading.value) return
 
-  if (!conversationId.value) conversationId.value = crypto.randomUUID()
+  if (!conversationId.value) conversationId.value = genId()
   const convId = conversationId.value
 
   // 本轮锁定所选标签：快照 id 与名称，用于检索过滤 + 历史记录
@@ -323,6 +323,16 @@ async function sendMessage() {
 
 function formatMarkdown(text) {
   return renderMarkdown(text)
+}
+
+// 生成会话ID。crypto.randomUUID() 仅在 HTTPS/localhost 等安全上下文可用，
+// 通过 http://<内网IP> 访问时它是 undefined，直接调用会抛错导致发送无响应。
+// 这里做安全降级，保证内网 IP 访问也能正常发起问答。
+function genId() {
+  try {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+  } catch {}
+  return 'c-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10)
 }
 
 async function scrollToBottom() {
