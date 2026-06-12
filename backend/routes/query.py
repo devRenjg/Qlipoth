@@ -357,6 +357,26 @@ def _select_files(results: list, max_files: int = 10) -> list[str]:
 
 
 
+def _table_span(sec_lines: list, idx: int) -> tuple:
+    """若 sec_lines[idx] 在一个 Markdown 表格内（或紧邻），返回该表格的完整行范围 (start,end)。
+    否则返回 None。表格是原子的——命中一行就应纳入整张表，避免数据被 ±radius 截断。"""
+    def is_tbl(i):
+        return 0 <= i < len(sec_lines) and sec_lines[i].lstrip().startswith("|")
+    if not (is_tbl(idx) or is_tbl(idx - 1) or is_tbl(idx + 1)):
+        return None
+    # 以 idx 为锚，向上下扩展到连续表格行的边界
+    anchor = idx if is_tbl(idx) else (idx - 1 if is_tbl(idx - 1) else idx + 1)
+    s = anchor
+    while is_tbl(s - 1):
+        s -= 1
+    e = anchor
+    while is_tbl(e + 1):
+        e += 1
+    # 把表格上方一行（通常是表标题/说明）也带上
+    s2 = s - 1 if s - 1 >= 0 and sec_lines[s - 1].strip() else s
+    return (s2, e + 1)
+
+
 def _extract_relevant_sections(content: str, results: list, context_radius: int = 20, budget: int = None) -> str:
     """Extract sections around search hits, ensuring coverage across different document sections.
     Prioritizes summary/statistics sections."""
@@ -421,10 +441,15 @@ def _extract_relevant_sections(content: str, results: list, context_radius: int 
             hit_indices = sorted({r.line_number - 1 - sec_start for r in sec_hits})
             ranges = []
             for hit in hit_indices:
-                s = max(0, hit - context_radius)
-                e = min(len(sec_lines), hit + context_radius + 1)
+                # 命中落在表格内 → 纳入整张表；否则取 ±context_radius
+                tspan = _table_span(sec_lines, hit)
+                if tspan:
+                    s, e = tspan
+                else:
+                    s = max(0, hit - context_radius)
+                    e = min(len(sec_lines), hit + context_radius + 1)
                 if ranges and s <= ranges[-1][1]:
-                    ranges[-1] = (ranges[-1][0], e)
+                    ranges[-1] = (ranges[-1][0], max(e, ranges[-1][1]))
                 else:
                     ranges.append((s, e))
 
