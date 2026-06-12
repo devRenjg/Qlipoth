@@ -231,3 +231,63 @@ def land_base64_images(markdown: str, url_prefix: str = "/api/documents/kb-image
     new_md = _DATA_IMG_RE.sub(_repl, markdown)
     return new_md, count
 
+
+def normalize_vertical_tables(markdown: str) -> tuple[str, int]:
+    """企微 doc 内嵌表格常被导出成"竖排单格"——每个单元格单独占一行（`|值`，行内无其它 `|`），
+    导致行列关系丢失、检索命中不到、LLM 读不懂。
+
+    保守合并：把**连续**的竖排单格行（含被短裸文本行打断的续接）拼成一行
+    `| a | b | c |`，让同一逻辑行的数据物理相邻、可被检索命中。
+
+    安全原则：只合并、不臆测列归属（损坏结构无法可靠还原行列，强行对列会制造错位假数据）；
+    已是横排多列的行（`|a|b|c|`）、分隔符行、普通正文都原样保留。返回 (新md, 合并的竖排块数)。
+    """
+    import re as _re
+    lines = markdown.splitlines()
+    out = []
+    buf = []
+    merged = 0
+
+    def is_sep(l):
+        return bool(_re.match(r'^\s*\|(\s*:?-{3,}:?\s*\|)+\s*$', l))
+
+    def flush():
+        nonlocal merged
+        if not buf:
+            return
+        cells = []
+        for b in buf:
+            c = b.strip().lstrip('|').strip()
+            if c:
+                cells.append(c)
+        if len(cells) >= 2:
+            out.append('| ' + ' | '.join(cells) + ' |')
+            merged += 1
+        else:
+            out.extend(buf)  # 只有0-1个有效格，不值得合并，原样还原
+        buf.clear()
+
+    pending_text = []  # 暂存竖排块中间的短裸文本（单元格换行溢出）
+    for l in lines:
+        s = l.strip()
+        is_vert = s.startswith('|') and s.count('|') <= 1 and not is_sep(l)
+        if is_vert:
+            # 短裸文本（<=20字、非空、不以|开头）视为上一格的换行续接，并入缓冲
+            if pending_text and buf:
+                buf[-1] = buf[-1] + ' ' + ' '.join(pending_text)
+            pending_text = []
+            buf.append(s)
+        elif buf and s and not s.startswith('|') and not is_sep(l) and len(s) <= 20:
+            pending_text.append(s)  # 可能是竖排块中间的溢出文本，先暂存
+        else:
+            if pending_text and buf:
+                buf[-1] = buf[-1] + ' ' + ' '.join(pending_text)
+            pending_text = []
+            flush()
+            out.append(l)
+    if pending_text and buf:
+        buf[-1] = buf[-1] + ' ' + ' '.join(pending_text)
+    flush()
+    return "\n".join(out), merged
+
+

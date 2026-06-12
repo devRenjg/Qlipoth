@@ -149,6 +149,7 @@ async def _process_one(path: str, sem: asyncio.Semaphore, write: bool, backup_di
             return rec
         await asyncio.sleep(REQ_GAP)  # 请求间隔，避免触发频率限制
     new_body, n_img = wecom.land_base64_images(raw)
+    new_body, _ = wecom.normalize_vertical_tables(new_body)  # 竖排碎片表格保守合并
     # 保留原头部(标题/来源/负责人/父文档) + 新正文
     header = _header(old_md)
     new_md = header + "\n\n" + new_body if header else new_body
