@@ -40,18 +40,18 @@
       </el-tab-pane>
 
       <el-tab-pane label="链接导入" name="url">
-        <p class="tab-desc">输入腾讯文档/企业微信文档链接，系统将自动抓取内容导入知识库</p>
+        <p class="tab-desc">输入腾讯文档/企业微信文档或 Confluence(wiki.example.com) 链接，系统将自动抓取内容导入知识库</p>
         <div class="url-import">
           <el-input
             v-model="docUrl"
-            placeholder="请输入文档链接，如 https://doc.weixin.qq.com/doc/..."
+            placeholder="如 https://doc.weixin.qq.com/doc/... 或 https://wiki.example.com/pages/viewpage.action?pageId=..."
             size="large"
             clearable
             :disabled="importing"
           >
             <template #prepend>链接</template>
           </el-input>
-          <div class="import-options">
+          <div class="import-options" v-if="!isConfluence">
             <span class="depth-label">递归抓取层数：</span>
             <el-input-number
               v-model="maxDepth"
@@ -63,6 +63,9 @@
               controls-position="right"
             />
             <span class="depth-hint">（0 = 仅当前文档，最多 3 层）</span>
+          </div>
+          <div class="import-options" v-else>
+            <span class="depth-hint">检测到 Confluence 链接，将自动抓取该页面及其下所有子页面（全部层级）</span>
           </div>
           <div class="tag-input-row url-tag-row">
             <span class="tag-input-label">标签（选填）：</span>
@@ -90,7 +93,8 @@
             {{ importing ? '正在抓取...' : '导入' }}
           </el-button>
           <p v-if="importing" class="import-tip">
-            正在通过浏览器抓取文档内容{{ maxDepth > 0 ? '（含嵌套文档，共' + maxDepth + '层）' : '' }}，预计需要 {{ maxDepth > 0 ? '30-120' : '10-30' }} 秒...
+            <template v-if="isConfluence">正在通过 Confluence API 抓取页面及其全部子页面，页面较多时可能需要 1-3 分钟...</template>
+            <template v-else>正在通过浏览器抓取文档内容{{ maxDepth > 0 ? '（含嵌套文档，共' + maxDepth + '层）' : '' }}，预计需要 {{ maxDepth > 0 ? '30-120' : '10-30' }} 秒...</template>
           </p>
         </div>
       </el-tab-pane>
@@ -246,6 +250,8 @@ const uploadTags = ref([])
 const urlTags = ref([])
 const allTags = ref([])
 const importTree = ref([])
+
+const isConfluence = computed(() => /(^|\/\/)info\.example\.co\b/i.test(docUrl.value.trim()))
 const importHistory = ref([])
 const loadingHistory = ref(false)
 const historyPage = ref(1)
@@ -310,7 +316,8 @@ async function importFromUrl() {
   importTree.value = []
 
   const url = docUrl.value.trim()
-  const body = JSON.stringify({ url, max_depth: maxDepth.value, tags: urlTags.value })
+  // Confluence 抓全部子页面，后端忽略 max_depth；这里传 0 仅为占位
+  const body = JSON.stringify({ url, max_depth: isConfluence.value ? 0 : maxDepth.value, tags: urlTags.value })
 
   try {
     const resp = await fetch('/api/upload/url/stream', {

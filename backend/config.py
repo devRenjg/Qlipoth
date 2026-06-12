@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     llm_api_format: str = "openai"  # "openai" or "anthropic"
     host: str = "0.0.0.0"
     port: int = 8000
+    wecom_cli_path: str = ""  # 空=自动探测(PATH / %APPDATA%\npm\wecom-cli.cmd)
 
 
 def load_settings() -> Settings:

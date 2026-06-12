@@ -36,22 +36,52 @@
 
     <!-- 清单详情：按六维度分组 -->
     <div class="cl-detail" v-if="activeChecklist">
+      <!-- 第一行：返回 + 标题 + 进度 -->
       <div class="detail-head">
         <el-button text @click="closeChecklist">← 返回列表</el-button>
         <span class="cl-act" :style="actStyle(activeChecklist.checklist.activity)">{{ activeChecklist.checklist.activity }}</span>
         <span class="detail-title">{{ activeChecklist.checklist.title }}</span>
         <span class="detail-prog">已处理 {{ activeChecklist.handled_count }}/{{ activeChecklist.item_count }}</span>
-        <el-radio-group v-model="filterMode" size="small" class="detail-filter">
-          <el-radio-button value="all">全部</el-radio-button>
-          <el-radio-button value="todo">未完成</el-radio-button>
-          <el-radio-button value="done">已完成</el-radio-button>
-        </el-radio-group>
-        <el-radio-group v-model="sevFilter" size="small" class="detail-filter">
-          <el-radio-button value="p0">只看P0</el-radio-button>
-          <el-radio-button value="p01">P0+P1</el-radio-button>
-          <el-radio-button value="all">全部</el-radio-button>
-        </el-radio-group>
-        <el-button size="small" text @click="toggleAll">{{ allCollapsed ? '全部展开' : '全部折叠' }}</el-button>
+      </div>
+      <!-- 第二行：筛选(左) + 操作(右) -->
+      <div class="detail-toolbar">
+        <div class="toolbar-left">
+          <el-radio-group v-model="filterMode" size="small">
+            <el-radio-button value="all">全部</el-radio-button>
+            <el-radio-button value="todo">未完成</el-radio-button>
+            <el-radio-button value="done">已完成</el-radio-button>
+          </el-radio-group>
+          <el-radio-group v-model="sevFilter" size="small">
+            <el-radio-button value="p0">只看P0</el-radio-button>
+            <el-radio-button value="p01">P0+P1</el-radio-button>
+            <el-radio-button value="all">全部</el-radio-button>
+          </el-radio-group>
+        </div>
+        <div class="toolbar-right">
+          <el-button size="small" text @click="toggleAll">{{ allCollapsed ? '全部展开' : '全部折叠' }}</el-button>
+          <el-button size="small" :type="selectMode ? 'warning' : 'success'" plain @click="toggleSelectMode">
+            {{ selectMode ? '退出选择' : '选择导出' }}
+          </el-button>
+        </div>
+      </div>
+      <!-- 选择模式工具条 -->
+      <div class="export-bar" v-if="selectMode">
+        <span>已选 {{ selectedIds.length }} 条</span>
+        <el-button size="small" @click="selectAllVisible">全选(当前筛选)</el-button>
+        <el-button size="small" @click="clearSelection">取消全选</el-button>
+        <el-button size="small" type="primary" :loading="exporting" :disabled="!selectedIds.length" @click="doExport">
+          {{ exporting ? '正在生成企微文档…' : `导出选中(${selectedIds.length})到企微文档` }}
+        </el-button>
+        <span class="export-hint">将生成一个企业微信在线文档（含可勾选 Checklist）</span>
+      </div>
+      <!-- 导出结果 -->
+      <div class="export-result" v-if="exportResult">
+        ✅ 已导出 {{ exportResult.count }} 条
+        <template v-if="exportResult.doc_count > 1">（内容较多，自动拆成 {{ exportResult.doc_count }} 个文档）</template>
+        <span v-for="(d, i) in (exportResult.docs || [{ url: exportResult.url, title: exportResult.title }])" :key="i">
+          → <a :href="d.url" target="_blank" rel="noopener">{{ exportResult.doc_count > 1 ? `文档${i+1}` : '打开企业微信文档' }}</a>
+        </span>
+        <el-button size="small" text @click="copyExportUrl">复制{{ exportResult.doc_count > 1 ? '首个' : '' }}链接</el-button>
       </div>
       <el-collapse v-model="openDims">
         <el-collapse-item v-for="dim in activeChecklist.dimensions" :key="dim" :name="dim"
@@ -62,11 +92,13 @@
             <el-button size="small" text @click.stop="startAdd(dim)">+ 加一条</el-button>
           </template>
           <div v-for="it in visibleItems(dim)" :key="it.id"
-               class="item-card" :class="{ handled: it.handled }">
-            <el-checkbox :model-value="!!it.handled" @change="toggleHandled(it)" class="item-check" />
+               class="item-card" :class="{ handled: it.handled, 'item-selected': selectMode && selectedIds.includes(it.id) }">
+            <el-checkbox v-if="selectMode" :model-value="selectedIds.includes(it.id)" @change="toggleSelect(it)" class="item-check" />
+            <el-checkbox v-else :model-value="!!it.handled" @change="toggleHandled(it)" class="item-check" />
             <div class="item-body">
               <div class="item-tags">
                 <span class="sev-tag" :class="'sev-' + (it.severity || 'P2')">{{ it.severity || 'P2' }}</span>
+                <span class="daylate-tag" v-if="it.day_late" title="该问题在活动当天发生，且本可以在备战前期/压测阶段提前规避，请负责人务必重视、重点前置处理">⚠ 当天发生·务必重视</span>
                 <span class="stage-tag" v-if="it.stage">{{ it.stage }}</span>
                 <span class="cross-tag" v-if="it.cross_from">借鉴自 {{ it.cross_from }}</span>
                 <span class="own-tag" v-if="it.team || it.owner">
@@ -131,6 +163,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   generateChecklist, getChecklistProgress, listChecklists, getChecklist,
   updateChecklistItem, addChecklistItem, deleteChecklistItem, deleteChecklist,
+  exportChecklistToWecom,
 } from '../api/index.js'
 import { colorForTag } from '../utils/tagColor.js'
 
@@ -159,6 +192,56 @@ function visibleItems(dim) {
   if (sevFilter.value === 'p0') items = items.filter(i => i.severity === 'P0')
   else if (sevFilter.value === 'p01') items = items.filter(i => i.severity === 'P0' || i.severity === 'P1')
   return items
+}
+
+// ── 选择导出到企微文档 ──
+const selectMode = ref(false)
+const selectedIds = ref([])         // 选中的条目 id
+const exporting = ref(false)
+const exportResult = ref(null)      // { url, count, title }
+
+function allVisibleItems() {
+  const dims = activeChecklist.value?.dimensions || []
+  return dims.flatMap(d => visibleItems(d))
+}
+function toggleSelectMode() {
+  selectMode.value = !selectMode.value
+  if (!selectMode.value) selectedIds.value = []
+}
+function toggleSelect(it) {
+  const i = selectedIds.value.indexOf(it.id)
+  if (i >= 0) selectedIds.value.splice(i, 1)
+  else selectedIds.value.push(it.id)
+}
+function selectAllVisible() {
+  selectedIds.value = allVisibleItems().map(i => i.id)
+}
+function clearSelection() {
+  selectedIds.value = []
+}
+async function doExport() {
+  if (!selectedIds.value.length) { ElMessage.warning('请先选择要导出的条目'); return }
+  exporting.value = true
+  exportResult.value = null
+  try {
+    const { data } = await exportChecklistToWecom(activeChecklist.value.checklist.id, selectedIds.value)
+    exportResult.value = data
+    ElMessage.success(`已导出 ${data.count} 条到企业微信文档`)
+  } catch (e) {
+    const msg = e?.response?.data?.detail || e.message || '导出失败'
+    ElMessage.error(msg)
+  } finally {
+    exporting.value = false
+  }
+}
+function copyExportUrl() {
+  const url = exportResult.value?.url
+  if (!url) return
+  try {
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(url)
+    else { const ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta) }
+    ElMessage.success('链接已复制')
+  } catch { ElMessage.warning('复制失败，请手动复制') }
 }
 
 function toggleAll() {
@@ -308,10 +391,12 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 .cl-card-meta { margin-top: 8px; display: flex; gap: 16px; color: #999; font-size: 12px; align-items: center; }
 .cl-time { margin-left: auto; }
 
-.detail-head { display: flex; align-items: center; gap: 12px; margin: 8px 0 20px; }
+.detail-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0 14px; }
 .detail-title { font-size: 18px; font-weight: 600; }
 .detail-prog { margin-left: auto; color: #67c23a; font-size: 13px; }
-.detail-filter { margin-left: 12px; }
+.detail-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 0 0 18px; padding: 10px 14px; background: #f7f9fc; border-radius: 8px; }
+.toolbar-left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.toolbar-right { display: flex; align-items: center; gap: 10px; }
 .dim-title { font-size: 15px; font-weight: 600; }
 .dim-count { font-style: normal; color: #999; font-size: 12px; margin: 0 10px; }
 .item-tags { display: flex; gap: 8px; margin-bottom: 4px; align-items: center; }
@@ -320,6 +405,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 .sev-P0 { background: #e63946; }
 .sev-P1 { background: #f59e0b; }
 .sev-P2 { background: #9aa0a6; }
+.daylate-tag { font-size: 11px; font-weight: 700; color: #fff; background: #c1121f; padding: 1px 8px; border-radius: 10px; box-shadow: 0 0 0 2px rgba(193,18,31,0.18); cursor: help; }
 a.item-src { color: #409eff; text-decoration: none; }
 a.item-src:hover { text-decoration: underline; }
 .cross-tag { font-size: 11px; background: #ecf5ff; color: #409eff; padding: 1px 8px; border-radius: 10px; border: 1px solid #d0e6ff; }
@@ -333,6 +419,11 @@ a.item-src:hover { text-decoration: underline; }
 .dim-title em { font-style: normal; color: #999; font-size: 12px; }
 .item-card { display: flex; gap: 10px; border: 1px solid #f0f0f0; border-radius: 8px; padding: 12px 14px; margin-top: 10px; background: #fafbff; }
 .item-card.handled { opacity: .55; background: #f5f5f5; }
+.item-card.item-selected { border-color: #4d6bfe; background: #eef2ff; }
+.export-bar { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; padding: 10px 14px; background: #fff7e6; border: 1px solid #ffe0a3; border-radius: 8px; font-size: 13px; }
+.export-hint { color: #999; font-size: 12px; }
+.export-result { margin: 0 0 14px; padding: 10px 14px; background: #f0f9eb; border: 1px solid #c2e7b0; border-radius: 8px; font-size: 13px; }
+.export-result a { color: #4d6bfe; margin: 0 8px; font-weight: 600; }
 .item-check { margin-top: 2px; }
 .item-body { flex: 1; }
 .item-row { font-size: 13px; line-height: 1.7; color: #444; }

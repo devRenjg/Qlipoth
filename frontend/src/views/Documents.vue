@@ -37,9 +37,13 @@
         <template #default="{ row }">{{ formatSize(row.file_size) }}</template>
       </el-table-column>
       <el-table-column prop="uploaded_at" label="上传时间" width="180" />
-      <el-table-column label="操作" :width="isAdmin ? 220 : 160">
+      <el-table-column label="操作" :width="isAdmin ? 280 : 220">
         <template #default="{ row }">
-          <el-button size="small" @click="viewDoc(row)">查看</el-button>
+          <template v-if="row.has_old_version">
+            <el-button size="small" type="primary" @click="viewVersion(row, 'new')">查看新</el-button>
+            <el-button size="small" @click="viewVersion(row, 'old')">查看旧</el-button>
+          </template>
+          <el-button v-else size="small" @click="viewDoc(row)">查看</el-button>
           <el-button v-if="isAdmin" size="small" @click="openTagDialog(row)">标签</el-button>
           <el-button size="small" type="danger" @click="confirmDelete(row)">删除</el-button>
         </template>
@@ -117,7 +121,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, inject } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, inject } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getDocuments, getDocument, deleteDocument,
@@ -176,13 +180,34 @@ const pagedDocs = computed(() => {
 // 筛选变化时回到第 1 页
 watch([filterText, filterTags], () => { currentPage.value = 1 })
 
-onMounted(() => { loadDocs(); loadTags() })
+onMounted(() => { loadDocs(); loadTags(); startAutoRefresh() })
+onUnmounted(() => { if (autoTimer) clearInterval(autoTimer) })
+
+let autoTimer = null
+const reimportCount = ref(0)
+function startAutoRefresh() {
+  // 后台批量重导期间，每 20s 静默刷新一次列表，新出现的「查看新/查看旧」会自动显示。
+  // 检测到重导数量增加时提示一次。
+  autoTimer = setInterval(() => silentRefresh(), 20000)
+}
+async function silentRefresh() {
+  try {
+    const { data } = await getDocuments()
+    const n = data.filter(d => d.has_old_version).length
+    if (n > reimportCount.value && reimportCount.value > 0) {
+      ElMessage.success(`已重导 ${n} 篇（+${n - reimportCount.value}），列表已刷新`)
+    }
+    reimportCount.value = n
+    documents.value = data   // 原地更新，不动当前筛选/分页
+  } catch {}
+}
 
 async function loadDocs() {
   loading.value = true
   try {
     const { data } = await getDocuments()
     documents.value = data
+    reimportCount.value = data.filter(d => d.has_old_version).length
   } finally {
     loading.value = false
   }
@@ -204,6 +229,13 @@ async function viewDoc(row) {
   const { data } = await getDocument(row.id)
   currentDoc.value = data
   dialogVisible.value = true
+}
+
+// 企微重导过的文档：新版/旧版分别开后端渲染页对比
+function viewVersion(row, which) {
+  const name = encodeURIComponent(row.stored_path)
+  const path = which === 'old' ? `/api/documents/view-old/${name}` : `/api/documents/view/${name}`
+  window.open(path, '_blank')
 }
 
 function openTagDialog(row) {

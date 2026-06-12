@@ -6,6 +6,10 @@ dist/
 backend/metadata.db
 backend/config.json
 backend/knowledge_base/
+backend/knowledge_base_old/
+backend/knowledge_base_backup_*/
+backend/kb_images/
+backend/.reimport_fails.json
 backend/.browser_data/
 .browser_data/
 frontend/node_modules/
@@ -13,3 +17,4 @@ frontend/node_modules/
 app.db
 *.db
 backend/eval/reports/_baseline_grep_cache.json
+.img_cache/
