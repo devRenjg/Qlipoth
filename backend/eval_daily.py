@@ -59,7 +59,19 @@ async def answer_in_kb(question: str, kb_dir: str) -> dict:
     t0 = time.time()
     try:
         strategy, _ = await llm.generate_search_strategy(question)
-        results = searcher.grep_search(strategy.get("keywords", [question]), strategy.get("file_pattern", "*"))
+        raw_kws = strategy.get("keywords", [question])
+        kws = []
+        for k in (raw_kws if isinstance(raw_kws, list) else [raw_kws]):
+            if isinstance(k, str):
+                kws.append(k)
+            elif isinstance(k, dict):
+                v = k.get("keyword") or k.get("word") or ""
+                if v:
+                    kws.append(str(v))
+            elif isinstance(k, (list, tuple)):
+                kws.extend(str(x) for x in k if isinstance(x, str))
+        kws = [k for k in kws if k.strip()] or [question]
+        results = searcher.grep_search(kws, strategy.get("file_pattern", "*"))
         if results:
             search_text, files_read, _ = _assemble_context(results, question)
         else:
