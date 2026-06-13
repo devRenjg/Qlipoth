@@ -64,34 +64,33 @@ def _metrics(md: str) -> dict:
 
 
 def _judge(old: dict, new: dict) -> tuple[str, str]:
-    """对比新旧指标，返回 (verdict, reason)。verdict ∈ better/worse/same。"""
+    """对比新旧指标，返回 (verdict, reason)。
+
+    策略（放宽替换门槛）：API 读取成功默认就替换（better），仅在**明显倒退**时拒绝（worse）：
+    - 丢图：旧有图(≥3)而新几乎没有（新 < 旧的 30%）
+    - 大量丢表格：旧表格多(≥10行)而新骤减到不足 30%
+    - 内容近乎全失：新正文 < 旧的 15% 且新无图无表（疑似读取残缺）
+    其余一律 better。倒退的标记 worse 供人工复核，不自动覆盖。
+    """
     reasons = []
-    better_signals = 0
-    worse_signals = 0
-    # 乱码大幅减少 = 强烈 better
-    if old["garble"] > 5 and new["garble"] < old["garble"] * 0.3:
-        better_signals += 2
-        reasons.append(f"乱码 {old['garble']}→{new['garble']}")
-    # 图片大增 = 强烈 better（Playwright 几乎抓不到图，API 能完整拿到）
-    if new["imgs"] > old["imgs"]:
-        better_signals += 2 if new["imgs"] - old["imgs"] >= 3 else 1
-        reasons.append(f"图片 {old['imgs']}→{new['imgs']}")
-    # 表格结构化明显增多（乱码表格被修复成真表格）
-    if new["tables"] > old["tables"] * 1.5 and new["tables"] - old["tables"] >= 5:
-        better_signals += 1
-        reasons.append(f"表格 {old['tables']}→{new['tables']}")
-    # 正文骤减 = 存疑信号；但若同时有图片大增/乱码减少，说明旧正文是噪声虚胖，不算 worse
-    if old["text_len"] > 200 and new["text_len"] < old["text_len"] * 0.4:
-        worse_signals += 2
-        reasons.append(f"正文 {old['text_len']}→{new['text_len']}")
-    # 判定：better 信号能压过 worse（图片/乱码/表格改善优先于"正文变短"）
-    if better_signals >= worse_signals and better_signals >= 1:
-        return "better", "；".join(reasons)
-    if worse_signals >= 2:
+    # 倒退检测
+    if old["imgs"] >= 3 and new["imgs"] < old["imgs"] * 0.3:
+        reasons.append(f"丢图 {old['imgs']}→{new['imgs']}")
         return "worse", "；".join(reasons)
-    if better_signals >= 1:
-        return "better", "；".join(reasons)
-    return "same", "；".join(reasons) or "无显著差异"
+    if old["tables"] >= 10 and new["tables"] < old["tables"] * 0.3:
+        reasons.append(f"表格骤减 {old['tables']}→{new['tables']}")
+        return "worse", "；".join(reasons)
+    if old["text_len"] > 200 and new["text_len"] < old["text_len"] * 0.15 and new["imgs"] == 0 and new["tables"] < 3:
+        reasons.append(f"内容近乎全失 正文{old['text_len']}→{new['text_len']}、无图无表")
+        return "worse", "；".join(reasons)
+    # 默认替换，附改善亮点（便于报告）
+    if new["imgs"] > old["imgs"]:
+        reasons.append(f"图片 {old['imgs']}→{new['imgs']}")
+    if old["garble"] > 5 and new["garble"] < old["garble"]:
+        reasons.append(f"乱码 {old['garble']}→{new['garble']}")
+    if new["tables"] > old["tables"]:
+        reasons.append(f"表格 {old['tables']}→{new['tables']}")
+    return "better", "；".join(reasons) or "API读取成功、无明显倒退"
 
 
 def _load_fails() -> dict:
