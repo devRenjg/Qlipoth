@@ -146,6 +146,22 @@ async def init_db():
                 FOREIGN KEY (checklist_id) REFERENCES checklists(id)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_activity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username TEXT,
+                action TEXT NOT NULL,
+                detail TEXT,
+                created_at TIMESTAMP DEFAULT (datetime('now', '+8 hours'))
+            )
+        """)
+        try:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_activity_user ON user_activity(user_id, id)"
+            )
+        except Exception:
+            pass
         try:
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_checklist_item ON checklist_items(checklist_id)"

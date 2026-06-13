@@ -429,6 +429,11 @@ async def generate_checklist(req: GenerateReq, request: Request):
         checklist_id = cur.lastrowid
     _GEN_PROGRESS[checklist_id] = {"status": "generating", "total": 0, "processed": 0}
     asyncio.create_task(_generate_task(req.activity, checklist_id))
+    try:
+        from activity import log_activity, ACT_CHECKLIST_GEN
+        await log_activity(me["id"], me["username"], ACT_CHECKLIST_GEN, f"{req.activity}《{title}》")
+    except Exception:
+        pass
     return {"id": checklist_id, "title": title, "status": "generating", "created_by": me["username"]}
 
 
@@ -664,7 +669,7 @@ def _build_export_markdown(activity: str, title: str, items: list[dict]) -> str:
 
 @router.post("/checklist/{checklist_id}/export-wecom")
 async def export_checklist_to_wecom(checklist_id: int, req: ExportWecomReq, request: Request):
-    await _require_checklist_owner(checklist_id, request)
+    me = await _require_checklist_owner(checklist_id, request)
     import wecom
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -725,6 +730,12 @@ async def export_checklist_to_wecom(checklist_id: int, req: ExportWecomReq, requ
 
     # 兼容前端：单文档时保持原字段，多文档时返回 docs 列表
     first = docs[0]
+    try:
+        from activity import log_activity, ACT_CHECKLIST_EXPORT
+        await log_activity(me["id"], me["username"], ACT_CHECKLIST_EXPORT,
+                           f"《{base_title}》{len(items)}条→{len(docs)}个企微文档")
+    except Exception:
+        pass
     return {
         "url": first["url"], "docid": first["docid"], "title": first["title"],
         "count": len(items), "doc_count": len(docs), "docs": docs,

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from searcher import grep_search, read_file_content, SearchResults
@@ -510,7 +510,7 @@ async def simple_search(q: str):
 
 
 @router.post("/query/stream")
-async def query_knowledge_base_stream(req: QueryRequest):
+async def query_knowledge_base_stream(req: QueryRequest, request: Request):
     settings = load_settings()
     if not settings.llm_api_key:
         raise HTTPException(400, "请先在设置中配置 LLM API Key")
@@ -532,6 +532,16 @@ async def query_knowledge_base_stream(req: QueryRequest):
         strategy, strategy_llm_time = await generate_search_strategy(resolved_q)
     except RuntimeError as e:
         raise HTTPException(502, f"LLM 搜索策略生成失败: {e}")
+
+    # 行为日志（尽力而为）：记录问答
+    try:
+        from activity import log_activity, current_user_brief, ACT_QUERY
+        from auth import COOKIE_NAME
+        _u = await current_user_brief(request.cookies.get(COOKIE_NAME))
+        if _u:
+            await log_activity(_u.get("id"), _u.get("username"), ACT_QUERY, req.question[:120])
+    except Exception:
+        pass
 
     keywords = strategy.get("keywords", [resolved_q])
     file_pattern = strategy.get("file_pattern", "*")
