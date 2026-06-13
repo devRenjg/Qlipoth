@@ -160,6 +160,30 @@ async def list_users(request: Request):
         return [dict(row) for row in rows]
 
 
+@router.get("/user/{user_id}/activity")
+async def user_activity(user_id: int, request: Request, limit: int = 100):
+    """查询某用户的行为日志（问答/生成清单/导出等）。Admin only。"""
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        raise HTTPException(401, "未登录")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        caller = await (await db.execute("SELECT role FROM users WHERE token = ?", (token,))).fetchone()
+        if not caller or caller["role"] != "admin":
+            raise HTTPException(403, "无权限")
+        rows = await (await db.execute(
+            "SELECT action, detail, created_at FROM user_activity WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (user_id, min(limit, 500)))).fetchall()
+        # 各类型计数汇总
+        stats = await (await db.execute(
+            "SELECT action, COUNT(*) c FROM user_activity WHERE user_id = ? GROUP BY action ORDER BY c DESC",
+            (user_id,))).fetchall()
+        return {
+            "items": [dict(r) for r in rows],
+            "stats": [dict(r) for r in stats],
+        }
+
+
 class RoleUpdateRequest(BaseModel):
     role: str
 

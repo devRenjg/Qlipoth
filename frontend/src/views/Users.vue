@@ -10,7 +10,7 @@
         </template>
       </el-table-column>
       <el-table-column prop="last_seen" label="最后活跃" width="180" />
-      <el-table-column label="操作" width="200">
+      <el-table-column label="操作" width="280">
         <template #default="{ row }">
           <el-select
             v-if="row.username !== currentUser?.username"
@@ -23,6 +23,7 @@
             <el-option label="超级用户" value="super" />
             <el-option label="普通用户" value="user" />
           </el-select>
+          <el-button size="small" text type="primary" @click="openActivity(row)">行为日志</el-button>
           <el-button
             v-if="row.username !== currentUser?.username"
             size="small"
@@ -33,6 +34,23 @@
         </template>
       </el-table-column>
     </el-table>
+
+    <el-drawer v-model="actVisible" :title="`行为日志 - ${actUser?.username || ''}`" size="46%">
+      <div v-loading="actLoading">
+        <div v-if="actStats.length" class="act-stats">
+          <el-tag v-for="s in actStats" :key="s.action" type="info" class="act-stat">
+            {{ s.action }} <b>{{ s.c }}</b>
+          </el-tag>
+        </div>
+        <el-table :data="actItems" stripe size="small" empty-text="暂无行为记录" max-height="640">
+          <el-table-column prop="created_at" label="时间" width="160" />
+          <el-table-column prop="action" label="功能" width="90">
+            <template #default="{ row }"><el-tag size="small" :type="actTag(row.action)">{{ row.action }}</el-tag></template>
+          </el-table-column>
+          <el-table-column prop="detail" label="详情" show-overflow-tooltip />
+        </el-table>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -45,7 +63,34 @@ const currentUser = inject('currentUser')
 const users = ref([])
 const loading = ref(false)
 
+const actVisible = ref(false)
+const actLoading = ref(false)
+const actUser = ref(null)
+const actItems = ref([])
+const actStats = ref([])
+
 const api = axios.create({ baseURL: '/api' })
+
+async function openActivity(row) {
+  actUser.value = row
+  actVisible.value = true
+  actLoading.value = true
+  actItems.value = []
+  actStats.value = []
+  try {
+    const { data } = await api.get(`/user/${row.id}/activity`)
+    actItems.value = data.items || []
+    actStats.value = data.stats || []
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '加载行为日志失败')
+  } finally {
+    actLoading.value = false
+  }
+}
+
+function actTag(action) {
+  return { '问答': '', '生成清单': 'success', '导出清单': 'warning', '导入文档': 'info', '删除文档': 'danger' }[action] || 'info'
+}
 
 onMounted(loadUsers)
 
@@ -93,4 +138,6 @@ function roleLabel(role) {
 
 <style scoped>
 .users-view h2 { margin-bottom: 20px; }
+.act-stats { margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
+.act-stat b { margin-left: 4px; }
 </style>
