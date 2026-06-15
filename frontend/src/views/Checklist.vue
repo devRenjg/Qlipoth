@@ -98,8 +98,9 @@
         </span>
         <el-button size="small" text @click="copyExportUrl">复制{{ exportResult.doc_count > 1 ? '首个' : '' }}链接</el-button>
       </div>
-      <el-collapse v-model="openDims">
+      <el-collapse v-model="openDims" class="cl-collapse">
         <el-collapse-item v-for="dim in activeChecklist.dimensions" :key="dim" :name="dim"
+                          :class="{ 'is-incident': dim === '事故/故障' }"
                           v-show="visibleItems(dim).length || (activeChecklist.grouped[dim] || []).length">
           <template #title>
             <span class="dim-title" :class="{ 'dim-incident': dim === '事故/故障' }">{{ dim === '事故/故障' ? '⚠ ' + dim : dim }}</span>
@@ -464,9 +465,12 @@ a.item-src:hover { text-decoration: underline; }
 .own-empty:hover { color: #4d6bfe; border-color: #4d6bfe; }
 .item-handled { color: #67c23a; font-size: 12px; }
 .dim-group { margin-bottom: 26px; }
-.dim-title { font-size: 15px; border-left: 4px solid #4d6bfe; padding-left: 10px; display: flex; align-items: center; gap: 8px; }
+.dim-title { font-size: 15px; border-left: 4px solid; border-image: linear-gradient(180deg, #2f80ff, #36d1c4) 1; padding-left: 10px; display: flex; align-items: center; gap: 8px; color: #1c2f5e; font-weight: 600; }
 .dim-title em { font-style: normal; color: #999; font-size: 12px; }
-.item-card { display: flex; gap: 10px; border: 1px solid #f0f0f0; border-radius: 8px; padding: 12px 14px; margin-top: 10px; background: #fafbff; }
+/* 事故/故障维度保持红色告警语义 */
+.dim-title.dim-incident { color: #e63946; border-image: none; border-left-color: #e63946; }
+.item-card { display: flex; gap: 10px; border: 1px solid #dbe5f2; border-radius: 10px; padding: 12px 14px; margin-top: 10px; background: linear-gradient(180deg, #fbfdff 0%, #ffffff 60%); box-shadow: 0 1px 6px rgba(31,58,110,.05); transition: box-shadow .2s ease, border-color .2s ease, transform .1s ease; }
+.item-card:hover { border-color: rgba(47,128,255,.4); box-shadow: 0 4px 16px rgba(47,128,255,.14); transform: translateY(-1px); }
 .item-card.handled { opacity: .55; background: #f5f5f5; }
 .item-card.item-selected { border-color: #4d6bfe; background: #eef2ff; }
 .export-bar { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; padding: 10px 14px; background: #fff7e6; border: 1px solid #ffe0a3; border-radius: 8px; font-size: 13px; }
@@ -481,4 +485,27 @@ a.item-src:hover { text-decoration: underline; }
 .item-row.timing b { color: #e6a23c; }
 .item-foot { margin-top: 6px; display: flex; align-items: center; gap: 8px; }
 .item-src { color: #aaa; font-size: 12px; margin-right: auto; }
+
+/* 维度折叠：套用作战地图卡片质感(蓝调圆角卡片+顺滑动效)，红色告警语义不动 */
+.cl-collapse { border: none; }
+.cl-collapse :deep(.el-collapse-item) {
+  margin-bottom: 12px;
+  border: 1px solid #dbe5f2;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fbfdff 0%, #ffffff 60%);
+  box-shadow: 0 2px 10px rgba(31,58,110,.06);
+  overflow: hidden;
+  transition: box-shadow .25s ease, border-color .25s ease;
+}
+.cl-collapse :deep(.el-collapse-item:hover) { border-color: rgba(47,128,255,.4); box-shadow: 0 6px 20px rgba(47,128,255,.14); }
+.cl-collapse :deep(.el-collapse-item.is-active) { border-color: rgba(47,128,255,.5); box-shadow: 0 6px 22px rgba(47,128,255,.16); }
+.cl-collapse :deep(.el-collapse-item__header) {
+  border: none; background: transparent; padding: 4px 16px; height: 52px;
+}
+.cl-collapse :deep(.el-collapse-item__wrap) { border: none; background: transparent; }
+.cl-collapse :deep(.el-collapse-item__content) { padding: 0 16px 14px; }
+.cl-collapse :deep(.el-collapse-item__arrow) { color: #8aa6d0; }
+.cl-collapse :deep(.el-collapse-item.is-active .el-collapse-item__arrow) { color: #2f80ff; }
+/* 事故/故障维度卡片：左侧红条提示告警 */
+.cl-collapse :deep(.el-collapse-item.is-incident) { border-left: 4px solid #e63946; }
 </style>
