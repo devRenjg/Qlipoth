@@ -24,7 +24,7 @@ _BJ = timezone(timedelta(hours=8))
 
 ACTIVITIES = ["S赛", "跨晚", "春晚"]
 # 事故/故障置顶警醒；撤掉"可复用沉淀"(太虚，内容并入其余维度)
-DIMENSIONS = ["事故/故障", "高可用保障", "直播播放体验", "成本", "安全", "业务需求"]
+from dimensions import DIMENSION_LABELS as DIMENSIONS
 # 严重度分级
 SEVERITIES = ["P0", "P1", "P2"]
 # 保障周期阶段（按发生先后排序，先发生在前）

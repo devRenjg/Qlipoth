@@ -19,9 +19,8 @@ import llm
 
 router = APIRouter(tags=["battlemap"])
 
-# 第一版覆盖的 6 个核心保障方向（按统一顺序；键为真实标签名，展示名见 DIM_LABEL）
-DIMENSIONS = ["事故/故障", "高可用保障", "直播体验", "成本", "安全", "业务需求"]
-DIM_LABEL = {"直播体验": "直播播放体验", "业务需求": "重大业务功能与需求"}  # 展示用别名(与保障清单一致)
+# 维度定义来自单一事实源 dimensions.py
+from dimensions import DIMENSION_TAGS as DIMENSIONS, TAG_TO_LABEL as DIM_LABEL
 
 PER_DOC_LIMIT = 3500     # 单篇喂给"要点抽取"的正文上限
 MAX_DOCS_PER_DIM = 0     # 0 = 全量扫描该方向所有文档（质量优先，不截断；第一段逐篇并发不受LLM上下文限制）

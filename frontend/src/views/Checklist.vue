@@ -182,6 +182,7 @@ import {
   exportChecklistToWecom,
 } from '../api/index.js'
 import { colorForTag } from '../utils/tagColor.js'
+import { DIMENSION_LABELS } from '../dimensions.js'
 
 const currentUser = inject('currentUser')
 // 写权限：仅清单生成者本人可改（admin 也不例外）；无生成者(历史清单)放开给所有人
@@ -203,7 +204,7 @@ const availableActivities = computed(() => {
   const mine = new Set(checklists.value.filter(c => c.created_by === me).map(c => c.activity))
   return activities.filter(a => !mine.has(a))
 })
-const dimensions = ['事故/故障', '高可用保障', '直播播放体验', '成本', '安全', '业务需求']
+const dimensions = DIMENSION_LABELS
 const stages = ['备战前期', '压测演练', '上线前', '活动当天', '活动后', '未分类']
 const genActivity = ref('')
 const generating = ref(false)
