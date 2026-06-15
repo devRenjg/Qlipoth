@@ -451,9 +451,11 @@ async function scrollToBottom() {
   gap: 8px;
 }
 .tag-filter-label {
-  flex: 0 0 auto;
+  flex: 0 0 76px;
+  width: 76px;
   font-size: 13px;
   color: #909399;
+  text-align: right;
   white-space: nowrap;
   line-height: 26px;
   height: 26px;
