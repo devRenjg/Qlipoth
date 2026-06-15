@@ -38,7 +38,7 @@
         <div class="cl-card-meta">
           <span>{{ c.item_count }} 条踩坑</span>
           <span>已处理 {{ c.handled_count }}/{{ c.item_count }}</span>
-          <span>源自 {{ c.source_doc_count }} 篇复盘</span>
+          <span>源自保障知识库</span>
           <span v-if="c.created_by">生成者：{{ c.created_by }}</span>
           <span class="cl-time">{{ c.created_at }}</span>
           <el-button v-if="canEditList(c)" size="small" type="danger" text @click.stop="removeChecklist(c.id)">删除</el-button>
