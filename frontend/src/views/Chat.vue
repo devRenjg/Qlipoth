@@ -42,7 +42,7 @@
           <p class="subtitle">克里珀持续以光年级屏障隔绝威胁，维系现存世界的完整。</p>
           <div v-if="tags.length" class="tag-filter">
             <div v-if="activityTags.length" class="tag-row">
-              <span class="tag-filter-label">大型活动</span>
+              <span class="tag-filter-label">大型活动：</span>
               <div class="tag-chips">
                 <span
                   v-for="t in activityTags"
@@ -54,7 +54,7 @@
               </div>
             </div>
             <div class="tag-row">
-              <span class="tag-filter-label">主题</span>
+              <span class="tag-filter-label">主题：</span>
               <div class="tag-chips">
                 <span
                   v-for="t in topicTags"
@@ -448,14 +448,12 @@ async function scrollToBottom() {
   display: flex;
   flex-wrap: nowrap;
   align-items: flex-start;
-  gap: 10px;
+  gap: 8px;
 }
 .tag-filter-label {
-  flex: 0 0 64px;
-  width: 64px;
+  flex: 0 0 auto;
   font-size: 13px;
   color: #909399;
-  text-align: right;
   white-space: nowrap;
   line-height: 26px;
   height: 26px;
