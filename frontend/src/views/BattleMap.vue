@@ -17,7 +17,6 @@
         <div class="bm-card-title" @click="toggle(d.dimension)">
           <span class="bm-dim-ico">{{ dimIcon(d.dimension) }}</span>
           <span class="bm-dim">{{ d.label }}</span>
-          <span class="bm-meta">{{ d.source_doc_count }} 篇</span>
           <span class="bm-chevron">▾</span>
         </div>
         <p class="bm-positioning" v-if="d.content">{{ d.content.positioning }}</p>
