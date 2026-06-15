@@ -40,3 +40,21 @@
 - **WHEN** 用户点击渲染内容中的一个 `http(s)` 链接
 - **THEN** 浏览器在新标签页打开该链接，且链接带有 `target="_blank"` 与 `rel="noopener noreferrer"`
 
+
+### Requirement: 文档新旧版本对比查看
+
+对经企微 API 重导替换过的文档（has_old_version=1），文档管理页 SHALL 提供"查看新"与"查看旧"两个入口，分别渲染重导后的新版（含 kb-image 本地图片）与重导前备份的旧版（knowledge_base_old/）。未重导的文档 SHALL 仅显示常规"查看"。文档列表 SHALL 每约 20 秒静默刷新，使后台重导新增的文档及其新旧入口自动出现。
+
+#### Scenario: 新旧对比
+
+- **WHEN** 用户对一个重导过的文档点击"查看旧"
+- **THEN** 打开重导前的原始内容渲染页；点击"查看新"打开重导后的内容，便于人工对比质量
+
+### Requirement: 在线文档图片渲染
+
+文档渲染 SHALL 正确显示图片。企微 API 落地的本地图片经 `/api/documents/kb-image/{name}` 同源服务直接显示；wiki.example.com 图片经携带 cookie 的服务端代理 `/api/documents/img-proxy` 显示。
+
+#### Scenario: info 图片经代理显示
+
+- **WHEN** 渲染含 wiki.example.com 图片的文档
+- **THEN** 图片经服务端 cookie 代理加载显示，而非因登录态缺失而失败
