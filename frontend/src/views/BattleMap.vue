@@ -56,6 +56,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
+import { TAG_TO_ICON } from '../dimensions.js'
 
 const api = axios.create({ baseURL: '/api' })
 
@@ -74,11 +75,7 @@ function toggle(dim) {
   s.has(dim) ? s.delete(dim) : s.add(dim)
   openSet.value = s
 }
-const DIM_ICONS = {
-  '事故/故障': '🚨', '高可用保障': '🛡️', '直播体验': '📺',
-  '成本': '💰', '安全': '🔒', '业务需求': '🎯',
-}
-function dimIcon(dim) { return DIM_ICONS[dim] || '📂' }
+function dimIcon(dim) { return TAG_TO_ICON[dim] || '📂' }
 
 onMounted(() => { load(); timer = setInterval(pollIfGenerating, 5000) })
 onUnmounted(() => { if (timer) clearInterval(timer) })
