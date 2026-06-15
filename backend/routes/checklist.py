@@ -422,6 +422,12 @@ async def generate_checklist(req: GenerateReq, request: Request):
         raise HTTPException(400, f"activity 必须是 {ACTIVITIES} 之一")
     title = req.title or f"{req.activity} 备战踩坑清单"
     async with aiosqlite.connect(DB_PATH) as db:
+        # 同一用户每个活动只能有一份清单，需先删除自己的旧清单才能重新生成
+        dup = await (await db.execute(
+            "SELECT id FROM checklists WHERE activity = ? AND created_by = ?",
+            (req.activity, me["username"]))).fetchone()
+        if dup:
+            raise HTTPException(409, f"你已生成过「{req.activity}」清单，请先删除自己的旧清单再重新生成")
         cur = await db.execute(
             "INSERT INTO checklists (activity, title, status, created_at, created_by) VALUES (?,?,?,?,?)",
             (req.activity, title, "generating", _now(), me["username"]))
