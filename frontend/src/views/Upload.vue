@@ -182,7 +182,7 @@
         <el-button size="small" @click="loadHistory" :loading="loadingHistory" style="margin-left: 12px;">刷新</el-button>
       </h3>
       <div v-if="importHistory.length" class="history-list">
-        <el-collapse>
+        <el-collapse class="hist-collapse">
           <el-collapse-item v-for="record in pagedHistory" :key="record.id" :name="record.id">
             <template #title>
               <span class="history-title">{{ record.display_title || record.root_title }}</span>
@@ -551,8 +551,8 @@ function updateFailedReason(id, reason) {
 .results h3 { margin-bottom: 12px; }
 .import-summary { margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
 .summary-text { color: #909399; font-size: 13px; }
-.doc-tree { border: 1px solid #ebeef5; border-radius: 4px; padding: 12px; }
-.tree-node { padding: 8px 4px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f5f5f5; }
+.doc-tree { border: 1px solid #eaf0f8; border-radius: 8px; padding: 8px 14px; background: #fafcff; }
+.tree-node { padding: 8px 4px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f0f4fa; }
 .tree-node:last-child { border-bottom: none; }
 .tree-indent { color: #c0c4cc; font-family: monospace; }
 .tree-tag { flex-shrink: 0; }
@@ -565,8 +565,30 @@ function updateFailedReason(id, reason) {
 .tree-error { color: #f56c6c; font-size: 12px; }
 .history-section { margin-top: 40px; }
 .history-pagination { margin-top: 16px; display: flex; justify-content: flex-end; }
-.history-title { font-weight: 500; }
+.history-title { font-weight: 600; color: #1c2f5e; }
 .history-time { color: #909399; font-size: 12px; margin-left: auto; padding-right: 12px; }
+
+/* 导入历史折叠卡片：套深空蓝卡片质感，留足内边距 */
+.hist-collapse { border: none; }
+.hist-collapse :deep(.el-collapse-item) {
+  margin-bottom: 12px;
+  border: 1px solid #dbe5f2;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fbfdff 0%, #ffffff 60%);
+  box-shadow: 0 2px 10px rgba(31,58,110,.06);
+  overflow: hidden;
+  transition: box-shadow .25s ease, border-color .25s ease;
+}
+.hist-collapse :deep(.el-collapse-item:hover) { border-color: rgba(47,128,255,.4); box-shadow: 0 6px 20px rgba(47,128,255,.14); }
+.hist-collapse :deep(.el-collapse-item.is-active) { border-color: rgba(47,128,255,.5); box-shadow: 0 6px 22px rgba(47,128,255,.16); }
+.hist-collapse :deep(.el-collapse-item__header) {
+  border: none; background: transparent; padding: 0 18px; height: 54px; line-height: 54px;
+  display: flex; align-items: center; flex-wrap: nowrap;
+}
+.hist-collapse :deep(.el-collapse-item__wrap) { border: none; background: transparent; }
+.hist-collapse :deep(.el-collapse-item__content) { padding: 0 18px 16px; }
+.hist-collapse :deep(.el-collapse-item__arrow) { color: #8aa6d0; }
+.hist-collapse :deep(.el-collapse-item.is-active .el-collapse-item__arrow) { color: #2f80ff; }
 .retry-actions { margin-bottom: 16px; display: flex; gap: 8px; align-items: center; }
 .retry-link { color: #409eff; text-decoration: none; font-size: 12px; }
 .retry-link:hover { text-decoration: underline; }
