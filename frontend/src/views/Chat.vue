@@ -419,26 +419,18 @@ async function scrollToBottom() {
 }
 .preset-questions {
   margin-top: 28px;
-  width: 660px;
   max-width: 100%;
-  margin-left: auto;
-  margin-right: auto;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  gap: 10px;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 8px;
   align-items: center;
 }
 .preset-label {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: #2c4a7c;
-  background: linear-gradient(180deg, #eef4ff, #e3edff);
-  border: 1px solid #cddcf5;
-  border-radius: 7px;
-  padding: 0 10px;
-  line-height: 24px;
-  height: 26px;
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: #909399;
+  white-space: nowrap;
 }
 .tag-filter {
   margin-top: 14px;
@@ -459,17 +451,13 @@ async function scrollToBottom() {
   gap: 10px;
 }
 .tag-filter-label {
-  flex: 0 0 68px;
-  width: 68px;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: #2c4a7c;
-  background: linear-gradient(180deg, #eef4ff, #e3edff);
-  border: 1px solid #cddcf5;
-  border-radius: 7px;
-  text-align: center;
+  flex: 0 0 64px;
+  width: 64px;
+  font-size: 13px;
+  color: #909399;
+  text-align: right;
   white-space: nowrap;
-  line-height: 24px;
+  line-height: 26px;
   height: 26px;
 }
 .tag-chips {
@@ -510,7 +498,8 @@ async function scrollToBottom() {
 .tag-filter-compact .tag-row { flex-wrap: wrap; justify-content: flex-start; }
 .preset-tag {
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
+  white-space: nowrap;
   background: rgba(77, 107, 254, 0.08) !important;
   border-color: rgba(77, 107, 254, 0.3) !important;
   color: #7b93fe !important;
