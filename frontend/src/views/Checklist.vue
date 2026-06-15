@@ -104,7 +104,6 @@
                           v-show="visibleItems(dim).length || (activeChecklist.grouped[dim] || []).length">
           <template #title>
             <span class="dim-title" :class="{ 'dim-incident': dim === '事故/故障' }">{{ dim === '事故/故障' ? '⚠ ' + dim : dim }}</span>
-            <em class="dim-count">{{ visibleItems(dim).length }} 条</em>
             <el-button v-if="canEditActive" size="small" text @click.stop="startAdd(dim)">+ 加一条</el-button>
           </template>
           <div v-for="it in visibleItems(dim)" :key="it.id"
