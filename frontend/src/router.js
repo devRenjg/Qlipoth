@@ -4,6 +4,7 @@ const routes = [
   { path: '/', redirect: '/chat' },
   { path: '/chat', component: () => import('./views/Chat.vue') },
   { path: '/checklist', component: () => import('./views/Checklist.vue') },
+  { path: '/battlemap', component: () => import('./views/BattleMap.vue') },
   { path: '/upload', component: () => import('./views/Upload.vue') },
   { path: '/documents', component: () => import('./views/Documents.vue') },
   { path: '/profiling', component: () => import('./views/Profiling.vue') },

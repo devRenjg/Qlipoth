@@ -156,6 +156,17 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT (datetime('now', '+8 hours'))
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS battle_map (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dimension TEXT NOT NULL UNIQUE,
+                content_json TEXT,
+                source_doc_count INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'done',
+                generated_by TEXT,
+                updated_at TIMESTAMP DEFAULT (datetime('now', '+8 hours'))
+            )
+        """)
         try:
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_activity_user ON user_activity(user_id, id)"

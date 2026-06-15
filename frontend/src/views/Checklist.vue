@@ -6,12 +6,13 @@
       <p class="gen-sub">选活动类型，从历史复盘文档中提炼上届踩过的坑，按保障六维度生成备战清单。</p>
       <div class="gen-controls">
         <el-select v-model="genActivity" placeholder="选择大型活动" style="width: 180px">
-          <el-option v-for="a in activities" :key="a" :label="a" :value="a" />
+          <el-option v-for="a in availableActivities" :key="a" :label="a" :value="a" />
         </el-select>
         <el-button type="primary" :loading="generating" :disabled="!genActivity" @click="doGenerate">
           {{ generating ? `生成中 ${genProcessed}/${genTotal}` : '生成清单' }}
         </el-button>
         <span v-if="generating" class="gen-hint">扫描复盘文档中，约需几分钟，可离开页面稍后回来看</span>
+        <span v-else-if="!availableActivities.length" class="gen-hint">你已为所有活动各生成过一份清单，如需重新生成请先删除自己对应的清单</span>
       </div>
     </div>
 
@@ -184,6 +185,13 @@ const canEditActive = computed(() => canEditList(activeChecklist.value?.checklis
 
 // 跨晚生成暂不开放，先聚焦 S赛/春晚（已有跨晚清单仍可查看）
 const activities = ['S赛', '春晚']
+// 同一用户每个活动只能有一份清单：已生成过的活动从下拉中隐藏（需先删除自己的清单才能重新生成）
+const availableActivities = computed(() => {
+  const me = currentUser?.value?.username
+  if (!me) return activities
+  const mine = new Set(checklists.value.filter(c => c.created_by === me).map(c => c.activity))
+  return activities.filter(a => !mine.has(a))
+})
 const dimensions = ['事故/故障', '高可用保障', '直播播放体验', '安全', '业务需求', '成本']
 const stages = ['备战前期', '压测演练', '上线前', '活动当天', '活动后', '未分类']
 const genActivity = ref('')
