@@ -21,7 +21,6 @@
    覆盖各页实际卡片类(scoped 组件也能命中，配合 !important 生效)。
    只升级"中性灰边框"卡片，功能色边框元素(引导条/标签)不在此列。 */
 .app-main .el-card,
-.app-main .bm-card,
 .app-main .cl-card,
 .app-main .item-card {
   border: 1px solid var(--tech-border) !important;
@@ -29,7 +28,6 @@
   transition: box-shadow .2s ease, border-color .2s ease;
 }
 .app-main .el-card:hover,
-.app-main .bm-card:hover,
 .app-main .cl-card:hover,
 .app-main .item-card:hover {
   border-color: rgba(47, 128, 255, 0.45) !important;
