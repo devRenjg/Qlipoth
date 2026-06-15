@@ -12,34 +12,40 @@
 
     <div v-loading="loading" class="bm-cards">
       <el-empty v-if="!anyContent && !loading" description="作战地图尚未生成" />
-      <div v-for="d in dimensions" :key="d.dimension" class="bm-card" v-show="d.content">
-        <div class="bm-card-title">
+      <div v-for="d in dimensions" :key="d.dimension" class="bm-card" :class="{ open: isOpen(d.dimension) }" v-show="d.content">
+        <div class="bm-card-bar"></div>
+        <div class="bm-card-title" @click="toggle(d.dimension)">
+          <span class="bm-dim-ico">{{ dimIcon(d.dimension) }}</span>
           <span class="bm-dim">{{ d.label }}</span>
-          <span class="bm-meta">{{ d.source_doc_count }} 篇相关文档 · {{ d.updated_at || '' }}</span>
+          <span class="bm-meta">{{ d.source_doc_count }} 篇</span>
+          <span class="bm-chevron">▾</span>
         </div>
-        <template v-if="d.content">
-          <p class="bm-positioning">{{ d.content.positioning }}</p>
-
-          <div class="bm-sec" v-if="d.content.key_systems?.length">
-            <div class="bm-sec-h">🔧 关键系统 / 链路</div>
-            <ul><li v-for="(x,i) in d.content.key_systems" :key="i">{{ x }}</li></ul>
+        <p class="bm-positioning" v-if="d.content">{{ d.content.positioning }}</p>
+        <el-collapse-transition>
+          <div v-show="isOpen(d.dimension)">
+            <template v-if="d.content">
+              <div class="bm-sec" v-if="d.content.key_systems?.length">
+                <div class="bm-sec-h">🔧 关键系统 / 链路</div>
+                <ul><li v-for="(x,i) in d.content.key_systems" :key="i">{{ x }}</li></ul>
+              </div>
+              <div class="bm-sec" v-if="d.content.history?.length">
+                <div class="bm-sec-h">📜 历史发生过什么</div>
+                <ul><li v-for="(x,i) in d.content.history" :key="i">{{ x }}</li></ul>
+              </div>
+              <div class="bm-sec" v-if="d.content.pitfalls?.length">
+                <div class="bm-sec-h">⚠ 水深的地方（重点警惕）</div>
+                <ul><li v-for="(x,i) in d.content.pitfalls" :key="i">{{ x }}</li></ul>
+              </div>
+              <div class="bm-sec" v-if="d.content.recommended_docs?.length">
+                <div class="bm-sec-h">📌 建议先看</div>
+                <div class="bm-docs">
+                  <el-button v-for="(doc,i) in d.content.recommended_docs" :key="i" size="small" text
+                    @click="viewDoc(doc)">{{ doc.title }}</el-button>
+                </div>
+              </div>
+            </template>
           </div>
-          <div class="bm-sec" v-if="d.content.history?.length">
-            <div class="bm-sec-h">📜 历史发生过什么</div>
-            <ul><li v-for="(x,i) in d.content.history" :key="i">{{ x }}</li></ul>
-          </div>
-          <div class="bm-sec" v-if="d.content.pitfalls?.length">
-            <div class="bm-sec-h">⚠ 水深的地方（重点警惕）</div>
-            <ul><li v-for="(x,i) in d.content.pitfalls" :key="i">{{ x }}</li></ul>
-          </div>
-          <div class="bm-sec" v-if="d.content.recommended_docs?.length">
-            <div class="bm-sec-h">📌 建议先看</div>
-            <div class="bm-docs">
-              <el-button v-for="(doc,i) in d.content.recommended_docs" :key="i" size="small" text
-                @click="viewDoc(doc)">{{ doc.title }}</el-button>
-            </div>
-          </div>
-        </template>
+        </el-collapse-transition>
       </div>
     </div>
   </div>
@@ -54,10 +60,23 @@ const api = axios.create({ baseURL: '/api' })
 const dimensions = ref([])
 const progress = ref({ status: 'idle', done: 0, total: 0, current: '' })
 const loading = ref(false)
+const openSet = ref(new Set())   // 默认全部折叠收拢
 let timer = null
 
 const generating = computed(() => progress.value.status === 'generating')
 const anyContent = computed(() => dimensions.value.some(d => d.content))
+
+function isOpen(dim) { return openSet.value.has(dim) }
+function toggle(dim) {
+  const s = new Set(openSet.value)
+  s.has(dim) ? s.delete(dim) : s.add(dim)
+  openSet.value = s
+}
+const DIM_ICONS = {
+  '事故/故障': '🚨', '高可用保障': '🛡️', '直播体验': '📺',
+  '成本': '💰', '安全': '🔒', '业务需求': '🎯',
+}
+function dimIcon(dim) { return DIM_ICONS[dim] || '📂' }
 
 onMounted(() => { load(); timer = setInterval(pollIfGenerating, 5000) })
 onUnmounted(() => { if (timer) clearInterval(timer) })
@@ -99,15 +118,50 @@ function viewDoc(doc) {
 .bm-head h2 { margin: 0 0 6px; }
 .bm-sub { color: #909399; font-size: 13px; max-width: 760px; line-height: 1.6; margin: 0; }
 .bm-progress { margin: 14px 0; }
-.bm-cards { margin-top: 18px; display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 16px; }
-.bm-card { border: 1px solid #ebeef5; border-radius: 10px; padding: 16px 18px; background: #fff; }
-.bm-card-title { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
-.bm-dim { font-size: 16px; font-weight: 600; color: #303133; }
-.bm-meta { font-size: 12px; color: #c0c4cc; }
-.bm-positioning { color: #409eff; font-size: 13px; margin: 0 0 12px; line-height: 1.6; }
-.bm-sec { margin-bottom: 12px; }
-.bm-sec-h { font-size: 13px; font-weight: 600; color: #606266; margin-bottom: 4px; }
+
+.bm-cards { margin-top: 18px; display: flex; flex-direction: column; gap: 14px; }
+
+/* 卡片：白底 + 左侧蓝青渐变光条 + 蓝调阴影，呼应导航栏深空蓝 */
+.bm-card {
+  position: relative;
+  border: 1px solid #dbe5f2;
+  border-radius: 12px;
+  padding: 16px 20px 16px 22px;
+  background: linear-gradient(180deg, #fbfdff 0%, #ffffff 60%);
+  box-shadow: 0 2px 10px rgba(31, 58, 110, 0.06);
+  overflow: hidden;
+  transition: box-shadow .25s ease, border-color .25s ease, transform .12s ease;
+}
+.bm-card:hover { border-color: rgba(47,128,255,.4); box-shadow: 0 6px 22px rgba(47,128,255,.16); }
+.bm-card.open { border-color: rgba(47,128,255,.5); box-shadow: 0 6px 24px rgba(47,128,255,.18); }
+/* 左侧装饰光条 */
+.bm-card-bar {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  background: linear-gradient(180deg, #2f80ff, #36d1c4);
+  opacity: .65; transition: opacity .25s, width .25s;
+}
+.bm-card.open .bm-card-bar, .bm-card:hover .bm-card-bar { opacity: 1; width: 5px; }
+
+.bm-card-title { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+.bm-dim-ico { font-size: 18px; }
+.bm-dim { font-size: 16px; font-weight: 600; color: #1c2f5e; }
+.bm-meta {
+  font-size: 12px; color: #5a7bb0;
+  background: #eef3fb; border: 1px solid #dbe5f2;
+  padding: 1px 8px; border-radius: 10px;
+}
+.bm-chevron { margin-left: auto; color: #8aa6d0; font-size: 14px; transition: transform .25s ease; }
+.bm-card.open .bm-chevron { transform: rotate(180deg); color: #2f80ff; }
+
+.bm-positioning { color: #2f80ff; font-size: 13px; margin: 8px 0 0; line-height: 1.6; }
+.bm-card.open .bm-positioning { margin-bottom: 4px; }
+
+.bm-sec { margin-top: 14px; }
+.bm-sec-h {
+  font-size: 13px; font-weight: 600; color: #2c4a7c; margin-bottom: 6px;
+  padding-bottom: 4px; border-bottom: 1px dashed #dbe5f2;
+}
 .bm-sec ul { margin: 0; padding-left: 18px; }
-.bm-sec li { font-size: 13px; color: #606266; line-height: 1.7; }
+.bm-sec li { font-size: 13px; color: #475569; line-height: 1.75; }
 .bm-docs { display: flex; flex-wrap: wrap; gap: 4px; }
 </style>
