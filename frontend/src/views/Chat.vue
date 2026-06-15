@@ -444,12 +444,12 @@ async function scrollToBottom() {
   gap: 10px;
 }
 .tag-filter-label {
-  flex: 0 0 40px;
-  width: 40px;
+  flex: 0 0 64px;
+  width: 64px;
   font-size: 13px;
   color: #888888;
-  text-align: justify;
-  text-align-last: justify;
+  text-align: right;
+  white-space: nowrap;
   line-height: 24px;
   padding-top: 2px;
 }
