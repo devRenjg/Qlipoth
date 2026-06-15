@@ -39,8 +39,11 @@
               <div class="bm-sec" v-if="d.content.recommended_docs?.length">
                 <div class="bm-sec-h">📌 建议先看</div>
                 <div class="bm-docs">
-                  <el-button v-for="(doc,i) in d.content.recommended_docs" :key="i" size="small" text
-                    @click="viewDoc(doc)">{{ doc.title }}</el-button>
+                  <a v-for="(doc,i) in d.content.recommended_docs" :key="i" class="bm-doc-chip"
+                    @click="viewDoc(doc)">
+                    <span class="chip-ico">🔗</span>
+                    <span class="chip-txt">{{ doc.title }}</span>
+                  </a>
                 </div>
               </div>
             </template>
@@ -153,7 +156,13 @@ function viewDoc(doc) {
 .bm-chevron { margin-left: auto; color: #8aa6d0; font-size: 14px; transition: transform .25s ease; }
 .bm-card.open .bm-chevron { transform: rotate(180deg); color: #2f80ff; }
 
-.bm-positioning { color: #2f80ff; font-size: 13px; margin: 8px 0 0; line-height: 1.6; }
+.bm-positioning {
+  color: #2c4a7c; font-size: 13px; margin: 10px 0 0; line-height: 1.7;
+  padding: 9px 12px;
+  background: linear-gradient(90deg, rgba(47,128,255,.08), rgba(54,209,196,.05));
+  border-left: 3px solid #2f80ff;
+  border-radius: 0 8px 8px 0;
+}
 .bm-card.open .bm-positioning { margin-bottom: 4px; }
 
 .bm-sec { margin-top: 14px; }
@@ -163,5 +172,22 @@ function viewDoc(doc) {
 }
 .bm-sec ul { margin: 0; padding-left: 18px; }
 .bm-sec li { font-size: 13px; color: #475569; line-height: 1.75; }
-.bm-docs { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* 建议先看：做成可点击的胶囊标签，区别于纯文字 */
+.bm-docs { display: flex; flex-wrap: wrap; gap: 8px; }
+.bm-doc-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  max-width: 100%;
+  padding: 5px 12px; border-radius: 16px;
+  font-size: 12.5px; color: #1d4ed8; text-decoration: none;
+  background: #eef4ff; border: 1px solid #c9ddff;
+  transition: background .2s, border-color .2s, transform .1s, box-shadow .2s;
+  cursor: pointer;
+}
+.bm-doc-chip:hover {
+  background: #2f80ff; color: #fff; border-color: #2f80ff;
+  transform: translateY(-1px); box-shadow: 0 3px 10px rgba(47,128,255,.3);
+}
+.bm-doc-chip .chip-ico { font-size: 12px; opacity: .85; }
+.bm-doc-chip .chip-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 </style>
