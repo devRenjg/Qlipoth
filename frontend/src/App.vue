@@ -156,9 +156,9 @@ body {
   display: flex;
   align-items: center;
   padding: 0 24px;
-  background: linear-gradient(100deg, #0f1b3d 0%, #1a2a5e 55%, #1e3a6e 100%);
-  border-bottom: 1px solid #2a3f73;
-  box-shadow: 0 2px 12px rgba(10, 20, 50, 0.35);
+  background: linear-gradient(100deg, #1c2f5e 0%, #25438a 55%, #2b4e9e 100%);
+  border-bottom: 1px solid #3a5499;
+  box-shadow: 0 2px 12px rgba(20, 35, 80, 0.3);
   position: relative;
 }
 .app-header::after {
@@ -184,20 +184,22 @@ body {
   flex: 1;
 }
 .nav-menu .el-menu-item {
-  color: rgba(255, 255, 255, 0.72) !important;
+  color: rgba(255, 255, 255, 0.65) !important;
   border-bottom: 2px solid transparent !important;
   font-size: 15px;
   transition: color .2s, background .2s;
 }
 .nav-menu .el-menu-item:hover {
   color: #ffffff !important;
-  background: rgba(47, 128, 255, 0.18) !important;
+  background: rgba(90, 160, 255, 0.2) !important;
 }
 .nav-menu .el-menu-item.is-active {
   color: #ffffff !important;
-  border-bottom-color: #2f80ff !important;
-  text-shadow: 0 0 10px rgba(47, 128, 255, 0.7);
-  background: rgba(47, 128, 255, 0.1) !important;
+  font-weight: 600;
+  border-bottom-color: #5ab0ff !important;
+  background: linear-gradient(180deg, rgba(90, 176, 255, 0.28), rgba(90, 176, 255, 0.12)) !important;
+  box-shadow: inset 0 -2px 10px rgba(90, 176, 255, 0.35);
+  text-shadow: 0 0 12px rgba(120, 200, 255, 0.9);
 }
 .user-info {
   display: flex;
