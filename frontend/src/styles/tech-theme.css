@@ -1,0 +1,64 @@
+/* 全局科技感"点缀层" —— 深空蓝主题统一外观。
+   原则：只动中性外观(背景/卡片边框/阴影/滚动条/标题装饰)，
+   不碰布局、不碰功能色(标签/状态/按钮)、保正文深色可读性。
+   主色：#2f80ff(蓝) / #36d1c4(青)，呼应顶部导航栏。 */
+
+:root {
+  --tech-blue: #2f80ff;
+  --tech-cyan: #36d1c4;
+  --tech-border: #dbe5f2;       /* 卡片淡蓝灰边框(替代 #ebeef5 中性灰) */
+  --tech-bg: #f4f7fc;           /* 内容区极淡冷调灰蓝背景 */
+  --tech-shadow: 0 2px 10px rgba(31, 58, 110, 0.06);
+  --tech-shadow-hover: 0 4px 18px rgba(47, 128, 255, 0.16);
+}
+
+/* 1. 内容区背景：极淡冷灰蓝，让白色卡片浮起来 */
+.app-main {
+  background: var(--tech-bg);
+}
+
+/* 2+3. 卡片类容器：淡蓝灰边框 + 轻蓝调阴影 + hover 泛蓝光。
+   覆盖各页实际卡片类(scoped 组件也能命中，配合 !important 生效)。
+   只升级"中性灰边框"卡片，功能色边框元素(引导条/标签)不在此列。 */
+.app-main .el-card,
+.app-main .bm-card,
+.app-main .cl-card,
+.app-main .item-card {
+  border: 1px solid var(--tech-border) !important;
+  box-shadow: var(--tech-shadow);
+  transition: box-shadow .2s ease, border-color .2s ease;
+}
+.app-main .el-card:hover,
+.app-main .bm-card:hover,
+.app-main .cl-card:hover,
+.app-main .item-card:hover {
+  border-color: rgba(47, 128, 255, 0.45) !important;
+  box-shadow: var(--tech-shadow-hover);
+}
+
+/* 4. 页面主标题左侧蓝青渐变竖条，呼应导航条 */
+.app-main h2 {
+  position: relative;
+  padding-left: 14px;
+}
+.app-main h2::before {
+  content: "";
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 4px; height: 1em;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--tech-blue), var(--tech-cyan));
+}
+
+/* 5. 滚动条：细蓝灰条(替代默认丑灰条) */
+.app-main ::-webkit-scrollbar { width: 9px; height: 9px; }
+.app-main ::-webkit-scrollbar-thumb {
+  background: #c2d2e8; border-radius: 5px;
+}
+.app-main ::-webkit-scrollbar-thumb:hover { background: #a9c0e0; }
+.app-main ::-webkit-scrollbar-track { background: transparent; }
+
+/* 6. 表格表头/中性分隔：冷调蓝灰，统一质感(仅头部背景，不动单元格功能色) */
+.app-main .el-table th.el-table__cell {
+  background: #eef3fb !important;
+}
+.app-main .el-table__cell { border-color: #eaf0f8; }
