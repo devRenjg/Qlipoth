@@ -336,8 +336,8 @@ async function openChecklist(id) {
   try {
     const { data } = await getChecklist(id)
     activeChecklist.value = data
-    // 默认展开所有有内容的维度（记住后续手动折叠状态）
-    openDims.value = data.dimensions.filter(d => (data.grouped[d] || []).length)
+    // 默认全部折叠收拢，用户点哪个展开哪个（与作战地图一致）
+    openDims.value = []
   } catch (e) { ElMessage.error('打开清单失败') }
 }
 
