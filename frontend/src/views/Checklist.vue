@@ -1,5 +1,15 @@
 <template>
   <div class="checklist-page">
+    <!-- 引导：优先看作战地图（尤其新负责人） -->
+    <router-link to="/battlemap" class="bm-banner">
+      <span class="bm-banner-icon">🗺️</span>
+      <span class="bm-banner-text">
+        <b>第一次参与保障？建议先看「作战地图」</b>
+        <em>快速了解各方向涉及哪些系统、历史踩过哪些大坑、哪里水深——再回来看具体清单</em>
+      </span>
+      <span class="bm-banner-go">查看作战地图 →</span>
+    </router-link>
+
     <!-- 顶部：生成新清单 -->
     <div class="gen-bar">
       <h2>保障清单 · 历史踩坑预警</h2>
@@ -399,6 +409,19 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 </script>
 <style scoped>
 .checklist-page { max-width: 960px; margin: 0 auto; padding: 24px 20px 60px; }
+.bm-banner {
+  display: flex; align-items: center; gap: 12px; text-decoration: none;
+  background: linear-gradient(90deg, #ecf5ff 0%, #f5f9ff 100%);
+  border: 1px solid #b3d8ff; border-left: 4px solid #409eff;
+  border-radius: 8px; padding: 12px 16px; margin-bottom: 18px;
+  transition: box-shadow .2s, transform .1s;
+}
+.bm-banner:hover { box-shadow: 0 2px 12px rgba(64,158,255,.25); transform: translateY(-1px); }
+.bm-banner-icon { font-size: 22px; }
+.bm-banner-text { display: flex; flex-direction: column; flex: 1; line-height: 1.5; }
+.bm-banner-text b { color: #2c6cb0; font-size: 14px; }
+.bm-banner-text em { color: #7a9bc0; font-size: 12px; font-style: normal; }
+.bm-banner-go { color: #409eff; font-weight: 600; font-size: 13px; white-space: nowrap; }
 .gen-bar h2 { margin: 0 0 4px; font-size: 20px; }
 .gen-sub { color: #888; font-size: 13px; margin: 0 0 14px; }
 .gen-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
