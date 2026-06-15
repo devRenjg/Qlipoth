@@ -228,30 +228,58 @@ async def main():
     sem = asyncio.Semaphore(1)
     results = []
     ok = 0
-    consec_rl = 0  # 连续限流计数，连续多次说明配额耗尽，提前收手
     fails = _load_fails()
-    for idx, p in enumerate(cands):
-        r = await _process_one(p, sem, write, backup_dir)
-        results.append(r)
-        print(f"  ({idx+1}/{len(cands)}) [{r['verdict']}] {r['file'][:34]} — {r.get('reason','')}", flush=True)
-        fn = r["file"]
-        if r.get("written"):
-            ok += 1
-        is_rl = "851010" in r.get("reason", "") or "851000" in r.get("reason", "")
-        if is_rl:
-            # 记录限流失败次数，下批排队尾，避免每批都先撞同一批读不到的文档
-            fails[fn] = fails.get(fn, 0) + 1
-            consec_rl += 1
-            if consec_rl >= 5:
-                print("  [早停] 连续 5 次限流，配额已耗尽，本批结束，等下次定时任务继续", flush=True)
-                break
-        else:
-            consec_rl = 0
-            if r["verdict"] in ("better", "worse", "same") and fn in fails:
-                fails.pop(fn, None)  # 这次读成功了，清掉失败计数
-        if max_ok and ok >= max_ok:
-            print(f"  [达上限] 本批已成功 {ok} 篇，结束", flush=True)
+
+    # 多机器人串行：bot1 配额尽(连续限流早停)→ 切 bot2 继续。配额按 bot 独立时可达约 40 篇/天。
+    try:
+        import wecom_profiles
+        bots = wecom_profiles.list_profiles() if write else []
+    except Exception:
+        bots = []
+    if not bots:
+        bots = [None]  # 无 profile 配置则用当前默认凭证单 bot 跑
+
+    processed = set()  # 本次已处理过的文件，切 bot 后不重复
+    stop_all = False
+    for bot in bots:
+        if stop_all:
             break
+        if bot:
+            switched = wecom_profiles.switch_to(bot)
+            print(f"\n=== 切换机器人 {bot}{'' if switched else '(切换失败,跳过)'} ===", flush=True)
+            if not switched:
+                continue
+        consec_rl = 0
+        bot_ok = 0
+        remaining = [p for p in cands if p not in processed]
+        for p in remaining:
+            r = await _process_one(p, sem, write, backup_dir)
+            results.append(r)
+            processed.add(p)
+            done_n = len(processed)
+            print(f"  ({done_n}/{len(cands)}) [{r['verdict']}] {r['file'][:34]} — {r.get('reason','')}", flush=True)
+            fn = r["file"]
+            if r.get("written"):
+                ok += 1
+                bot_ok += 1
+            is_rl = "851010" in r.get("reason", "") or "851000" in r.get("reason", "")
+            if is_rl:
+                fails[fn] = fails.get(fn, 0) + 1
+                processed.discard(p)  # 限流没读成功，留给下个 bot 重试
+                consec_rl += 1
+                if consec_rl >= 5:
+                    print(f"  [早停] {bot or '默认bot'} 连续 5 次限流，配额已耗尽" + ("，切下一个机器人" if bot != bots[-1] else "，所有机器人配额已尽，结束"), flush=True)
+                    break
+            else:
+                consec_rl = 0
+                if r["verdict"] in ("better", "worse", "same") and fn in fails:
+                    fails.pop(fn, None)
+            if max_ok and ok >= max_ok:
+                print(f"  [达上限] 本批已成功 {ok} 篇，结束", flush=True)
+                stop_all = True
+                break
+        if bot:
+            print(f"  [{bot}] 本机器人本批成功 {bot_ok} 篇", flush=True)
     _save_fails(fails)
 
     # 汇总
