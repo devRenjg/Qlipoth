@@ -52,8 +52,8 @@
       <div class="logo"><span class="logo-mark">◆</span>克里珀</div>
       <el-menu mode="horizontal" :default-active="activeRoute" router class="nav-menu">
         <el-menu-item index="/chat">智能问答</el-menu-item>
-        <el-menu-item index="/checklist">保障清单</el-menu-item>
         <el-menu-item index="/battlemap">作战地图</el-menu-item>
+        <el-menu-item index="/checklist">保障清单</el-menu-item>
         <el-menu-item index="/upload" v-if="user.role !== 'user'">上传文档</el-menu-item>
         <el-menu-item index="/documents" v-if="user.role !== 'user'">文档管理</el-menu-item>
         <el-menu-item index="/profiling" v-if="user.role === 'admin'">性能分析</el-menu-item>
