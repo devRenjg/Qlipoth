@@ -23,8 +23,8 @@ DIMENSIONS = ["事故/故障", "高可用保障", "直播体验", "成本", "安
 DIM_LABEL = {"业务需求": "重大业务功能与需求"}  # 展示用别名
 
 PER_DOC_LIMIT = 3500     # 单篇喂给"要点抽取"的正文上限
-MAX_DOCS_PER_DIM = 80    # 单方向最多扫多少篇（按文档数降序取，控制成本）
-SCAN_CONCURRENCY = 4
+MAX_DOCS_PER_DIM = 0     # 0 = 全量扫描该方向所有文档（质量优先，不截断；第一段逐篇并发不受LLM上下文限制）
+SCAN_CONCURRENCY = 6     # 全量下适度提高并发以缩短总时长
 
 _PROGRESS: dict = {"status": "idle", "total": 0, "done": 0, "current": ""}
 
@@ -67,14 +67,17 @@ async def _extract_points(name: str, content: str, dim: str, sem) -> str:
 
 
 async def _docs_of_dim(dim: str) -> list:
-    """取该方向标签下的文档（按相关性粗略用文档大小/全部取，限 MAX_DOCS_PER_DIM）。"""
+    """取该方向标签下的文档。MAX_DOCS_PER_DIM=0 时全量取（质量优先）。"""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        rows = await (await db.execute(
-            """SELECT DISTINCT d.original_name, d.stored_path
-               FROM documents d JOIN document_tags dt ON d.id = dt.document_id
-               JOIN tags t ON t.id = dt.tag_id
-               WHERE t.name = ? LIMIT ?""", (dim, MAX_DOCS_PER_DIM))).fetchall()
+        sql = """SELECT DISTINCT d.original_name, d.stored_path
+                 FROM documents d JOIN document_tags dt ON d.id = dt.document_id
+                 JOIN tags t ON t.id = dt.tag_id WHERE t.name = ?"""
+        params = [dim]
+        if MAX_DOCS_PER_DIM and MAX_DOCS_PER_DIM > 0:
+            sql += " LIMIT ?"
+            params.append(MAX_DOCS_PER_DIM)
+        rows = await (await db.execute(sql, params)).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -95,11 +98,12 @@ async def _gen_one_dim(dim: str, kb: str, sem) -> dict:
 
     card = {"positioning": "", "key_systems": [], "history": [], "pitfalls": [], "recommended_docs": rec_docs}
     if points:
-        joined = "\n".join(f"- {p}" for p in points)[:24000]
+        # 分层归并：要点过多时先分批压缩，避免一次汇总把数据截断丢失（全量质量优先）
+        merged = await _reduce_points(points, dim)
         try:
             txt, _ = await llm.chat_completion(
                 [{"role": "system", "content": CARD_SYS.format(dim=DIM_LABEL.get(dim, dim))},
-                 {"role": "user", "content": joined}],
+                 {"role": "user", "content": merged}],
                 temperature=0, model=_model())
             txt = txt.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
             parsed = json.loads(txt)
@@ -109,6 +113,40 @@ async def _gen_one_dim(dim: str, kb: str, sem) -> dict:
         except Exception:
             pass
     return {"dimension": dim, "content": card, "source_doc_count": len(docs)}
+
+
+REDUCE_SYS = """下面是某保障方向从多篇文档抽取的要点（可能很多）。请在不丢失关键信息的前提下做归并去重：
+合并语义重复项、保留所有不同的关键系统/事故/坑，输出更精炼的要点列表（分条，每条一句）。只输出要点。"""
+
+
+async def _reduce_points(points: list, dim: str, budget: int = 20000) -> str:
+    """要点总量超预算时，分批用 LLM 压缩归并到一层，循环直到放得下——避免简单截断丢数据。"""
+    joined = "\n".join(f"- {p}" for p in points)
+    if len(joined) <= budget:
+        return joined
+    # 分批压缩
+    batches, cur, cur_len = [], [], 0
+    for p in points:
+        if cur_len + len(p) > budget and cur:
+            batches.append(cur); cur, cur_len = [], 0
+        cur.append(p); cur_len += len(p) + 3
+    if cur:
+        batches.append(cur)
+    reduced = []
+    for b in batches:
+        try:
+            txt, _ = await llm.chat_completion(
+                [{"role": "system", "content": REDUCE_SYS},
+                 {"role": "user", "content": "\n".join(f"- {x}" for x in b)}],
+                temperature=0, model=_model())
+            reduced.append(txt.strip())
+        except Exception:
+            reduced.append("\n".join(f"- {x}" for x in b[:30]))  # 压缩失败兜底保留部分
+    out = "\n".join(reduced)
+    # 若压缩一轮后仍超预算，递归再压
+    if len(out) > budget:
+        return await _reduce_points([l.strip("- ").strip() for l in out.splitlines() if l.strip()], dim, budget)
+    return out
 
 
 async def _genmap_task(generated_by: str):
