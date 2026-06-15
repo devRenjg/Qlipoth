@@ -43,7 +43,7 @@
             <div class="bm-sec-h">📌 建议先看</div>
             <div class="bm-docs">
               <el-button v-for="(doc,i) in d.content.recommended_docs" :key="i" size="small" text
-                @click="viewDoc(doc.path)">{{ doc.title }}</el-button>
+                @click="viewDoc(doc)">{{ doc.title }}</el-button>
             </div>
           </div>
         </template>
@@ -103,8 +103,13 @@ async function doGenerate() {
   }
 }
 
-function viewDoc(path) {
-  window.open(`/api/documents/view/${encodeURIComponent(path)}`, '_blank')
+function viewDoc(doc) {
+  // 优先跳原始企微/info 在线文档；无源链接才回退本地渲染页
+  if (doc.url) {
+    window.open(doc.url, '_blank')
+  } else {
+    window.open(`/api/documents/view/${encodeURIComponent(doc.path)}`, '_blank')
+  }
 }
 </script>
 
