@@ -203,7 +203,7 @@ const availableActivities = computed(() => {
   const mine = new Set(checklists.value.filter(c => c.created_by === me).map(c => c.activity))
   return activities.filter(a => !mine.has(a))
 })
-const dimensions = ['事故/故障', '高可用保障', '直播播放体验', '安全', '业务需求', '成本']
+const dimensions = ['事故/故障', '高可用保障', '直播播放体验', '成本', '安全', '业务需求']
 const stages = ['备战前期', '压测演练', '上线前', '活动当天', '活动后', '未分类']
 const genActivity = ref('')
 const generating = ref(false)
@@ -465,7 +465,7 @@ a.item-src:hover { text-decoration: underline; }
 .own-empty:hover { color: #4d6bfe; border-color: #4d6bfe; }
 .item-handled { color: #67c23a; font-size: 12px; }
 .dim-group { margin-bottom: 26px; }
-.dim-title { font-size: 15px; border-left: 4px solid; border-image: linear-gradient(180deg, #2f80ff, #36d1c4) 1; padding-left: 10px; display: flex; align-items: center; gap: 8px; color: #1c2f5e; font-weight: 600; }
+.dim-title { font-size: 15px; border-left: 4px solid; border-image: linear-gradient(180deg, #2f80ff, #36d1c4) 1; padding-left: 10px; display: inline-flex; align-items: center; gap: 8px; color: #1c2f5e; font-weight: 600; line-height: 1.2; white-space: nowrap; }
 .dim-title em { font-style: normal; color: #999; font-size: 12px; }
 /* 事故/故障维度保持红色告警语义 */
 .dim-title.dim-incident { color: #e63946; border-image: none; border-left-color: #e63946; }
@@ -500,8 +500,10 @@ a.item-src:hover { text-decoration: underline; }
 .cl-collapse :deep(.el-collapse-item:hover) { border-color: rgba(47,128,255,.4); box-shadow: 0 6px 20px rgba(47,128,255,.14); }
 .cl-collapse :deep(.el-collapse-item.is-active) { border-color: rgba(47,128,255,.5); box-shadow: 0 6px 22px rgba(47,128,255,.16); }
 .cl-collapse :deep(.el-collapse-item__header) {
-  border: none; background: transparent; padding: 4px 16px; height: 52px;
+  border: none; background: transparent; padding: 0 16px; height: 52px; line-height: 52px;
+  display: flex; align-items: center; flex-wrap: nowrap;
 }
+.cl-collapse :deep(.el-collapse-item__header .dim-title) { flex: 0 0 auto; }
 .cl-collapse :deep(.el-collapse-item__wrap) { border: none; background: transparent; }
 .cl-collapse :deep(.el-collapse-item__content) { padding: 0 16px 14px; }
 .cl-collapse :deep(.el-collapse-item__arrow) { color: #8aa6d0; }
