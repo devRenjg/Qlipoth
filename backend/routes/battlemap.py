@@ -6,6 +6,7 @@
 """
 import os
 import json
+import re
 import asyncio
 import aiosqlite
 from fastapi import APIRouter, Request, HTTPException
@@ -32,6 +33,19 @@ _PROGRESS: dict = {"status": "idle", "total": 0, "done": 0, "current": ""}
 def _now():
     from datetime import datetime, timezone, timedelta
     return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
+
+
+_SRC_RE = re.compile(r"^>\s*来源[:：]\s*(\S+)", re.M)
+
+
+def _source_url(kb: str, stored_path: str) -> str:
+    """从 md 文件开头的 `> 来源:` 提取原始文档链接（企微/info 均可），点击直达原文。"""
+    try:
+        head = open(os.path.join(kb, stored_path), encoding="utf-8", errors="replace").read(800)
+        m = _SRC_RE.search(head)
+        return m.group(1) if m else ""
+    except Exception:
+        return ""
 
 
 def _model():
@@ -94,7 +108,7 @@ async def _gen_one_dim(dim: str, kb: str, sem) -> dict:
     points = await asyncio.gather(*point_tasks) if point_tasks else []
     points = [p for p in points if p]
     # 推荐文档：取文档列表前若干（有内容的），给前端可点开
-    rec_docs = [{"title": d["original_name"], "path": d["stored_path"]} for d in docs[:8]]
+    rec_docs = [{"title": d["original_name"], "path": d["stored_path"], "url": _source_url(kb, d["stored_path"])} for d in docs[:8]]
 
     card = {"positioning": "", "key_systems": [], "history": [], "pitfalls": [], "recommended_docs": rec_docs}
     if points:
