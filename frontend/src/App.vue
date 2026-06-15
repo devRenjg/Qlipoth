@@ -49,7 +49,7 @@
   </div>
   <el-container class="app-container" v-if="ready && user">
     <el-header class="app-header">
-      <div class="logo">克里珀</div>
+      <div class="logo"><span class="logo-mark">◆</span>克里珀</div>
       <el-menu mode="horizontal" :default-active="activeRoute" router class="nav-menu">
         <el-menu-item index="/chat">智能问答</el-menu-item>
         <el-menu-item index="/checklist">保障清单</el-menu-item>
@@ -156,15 +156,27 @@ body {
   display: flex;
   align-items: center;
   padding: 0 24px;
-  background: #ffffff;
-  border-bottom: 1px solid #e8e8e8;
+  background: linear-gradient(100deg, #0f1b3d 0%, #1a2a5e 55%, #1e3a6e 100%);
+  border-bottom: 1px solid #2a3f73;
+  box-shadow: 0 2px 12px rgba(10, 20, 50, 0.35);
+  position: relative;
+}
+.app-header::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background: linear-gradient(90deg, transparent, #2f80ff 40%, #36d1c4 60%, transparent);
+  opacity: 0.7;
 }
 .logo {
-  font-size: 26px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 25px;
   font-weight: 700;
-  margin-right: 40px;
-  color: #1a1a2e;
-  letter-spacing: 2px;
+  margin-right: 44px;
+  color: #ffffff;
+  letter-spacing: 3px;
+}
+.logo-mark {
+  color: #36d1c4; font-size: 16px;
+  text-shadow: 0 0 8px rgba(54, 209, 196, 0.8);
 }
 .nav-menu {
   background: transparent !important;
@@ -172,25 +184,31 @@ body {
   flex: 1;
 }
 .nav-menu .el-menu-item {
-  color: #666666 !important;
+  color: rgba(255, 255, 255, 0.72) !important;
   border-bottom: 2px solid transparent !important;
+  font-size: 15px;
+  transition: color .2s, background .2s;
 }
 .nav-menu .el-menu-item:hover {
-  color: #1a1a2e !important;
-  background: rgba(77, 107, 254, 0.05) !important;
+  color: #ffffff !important;
+  background: rgba(47, 128, 255, 0.18) !important;
 }
 .nav-menu .el-menu-item.is-active {
-  color: #1a1a2e !important;
-  border-bottom-color: #4d6bfe !important;
+  color: #ffffff !important;
+  border-bottom-color: #2f80ff !important;
+  text-shadow: 0 0 10px rgba(47, 128, 255, 0.7);
+  background: rgba(47, 128, 255, 0.1) !important;
 }
 .user-info {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin-left: 16px;
 }
-.username { font-size: 14px; color: #333; }
-.username.anonymous { color: #909399; }
+.username { font-size: 14px; color: rgba(255, 255, 255, 0.9); }
+.username.anonymous { color: rgba(255, 255, 255, 0.5); }
+.user-info .el-button { color: rgba(255, 255, 255, 0.7) !important; }
+.user-info .el-button:hover { color: #ffffff !important; }
 .app-main {
   padding: 24px;
   max-width: 1200px;
