@@ -225,7 +225,15 @@ async def get_battlemap():
             roles = json.loads(rr["content_json"]).get("roles")
         except Exception:
             roles = None
-    return {"dimensions": out, "roles": roles, "progress": _PROGRESS}
+    # 历史大型活动（时间倒序，展示在最前）
+    events = None
+    er = by_dim.get("__events__")
+    if er and er["content_json"]:
+        try:
+            events = json.loads(er["content_json"]).get("events")
+        except Exception:
+            events = None
+    return {"dimensions": out, "roles": roles, "events": events, "progress": _PROGRESS}
 
 
 @router.post("/battlemap/generate")
