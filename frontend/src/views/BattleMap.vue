@@ -12,6 +12,26 @@
 
     <div v-loading="loading" class="bm-cards">
       <el-empty v-if="!anyContent && !loading" description="作战地图尚未生成" />
+
+      <!-- 关键角色与团队(置于方向卡片前) -->
+      <div v-if="roles && roles.length" class="bm-card bm-roles open">
+        <div class="bm-card-bar"></div>
+        <div class="bm-roles-head">
+          <span class="bm-dim-ico">👥</span>
+          <span class="bm-dim">历史保障 · 关键角色与团队</span>
+        </div>
+        <p class="bm-positioning">基于历史保障清单沉淀的各职能团队与负责人，帮新负责人快速认识各块归属。</p>
+        <div class="bm-roles-grid">
+          <div v-for="(r, i) in roles" :key="i" class="bm-role">
+            <div class="bm-role-team">{{ r.team }}</div>
+            <div class="bm-role-owners">
+              <span v-for="(o, j) in r.owners" :key="j" class="bm-owner-chip">{{ o }}</span>
+            </div>
+            <div class="bm-role-scope">{{ r.scope }}</div>
+          </div>
+        </div>
+      </div>
+
       <div v-for="d in dimensions" :key="d.dimension" class="bm-card" :class="{ open: isOpen(d.dimension) }" v-show="d.content">
         <div class="bm-card-bar"></div>
         <div class="bm-card-title" @click="toggle(d.dimension)">
@@ -61,6 +81,7 @@ import { TAG_TO_ICON } from '../dimensions.js'
 const api = axios.create({ baseURL: '/api' })
 
 const dimensions = ref([])
+const roles = ref([])
 const progress = ref({ status: 'idle', done: 0, total: 0, current: '' })
 const loading = ref(false)
 const openSet = ref(new Set())   // 默认全部折叠收拢
@@ -85,6 +106,7 @@ async function load() {
   try {
     const { data } = await api.get('/battlemap')
     dimensions.value = data.dimensions
+    roles.value = data.roles || []
     progress.value = data.progress || progress.value
   } finally {
     loading.value = false
@@ -186,4 +208,14 @@ function viewDoc(doc) {
 }
 .bm-doc-chip .chip-ico { font-size: 12px; opacity: .85; }
 .bm-doc-chip .chip-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+
+/* 关键角色与团队卡片 */
+.bm-roles-head { display: flex; align-items: center; gap: 10px; }
+.bm-roles-head .bm-dim { font-size: 16px; font-weight: 600; color: #1c2f5e; }
+.bm-roles-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
+.bm-role { border: 1px solid #e3ebf6; border-radius: 10px; padding: 10px 12px; background: #fafcff; }
+.bm-role-team { font-size: 13.5px; font-weight: 600; color: #2c4a7c; margin-bottom: 6px; }
+.bm-role-owners { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+.bm-owner-chip { font-size: 12px; color: #1d4ed8; background: #eef4ff; border: 1px solid #c9ddff; border-radius: 12px; padding: 1px 9px; }
+.bm-role-scope { font-size: 12.5px; color: #5a6b85; line-height: 1.6; }
 </style>
