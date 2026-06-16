@@ -43,26 +43,6 @@
         </el-collapse-transition>
       </div>
 
-      <!-- 保障节奏:什么阶段做什么 -->
-      <div v-if="timeline && timeline.length" class="bm-card bm-rhythm" :class="{ open: isOpen('__timeline__') }">
-        <div class="bm-card-bar"></div>
-        <div class="bm-card-title" @click="toggle('__timeline__')">
-          <span class="bm-dim-ico">⏱️</span>
-          <span class="bm-dim">保障节奏 · 各阶段重点</span>
-          <span class="bm-chevron">▾</span>
-        </div>
-        <el-collapse-transition>
-          <div v-show="isOpen('__timeline__')">
-            <div class="bm-rhythm-flow">
-              <div v-for="(s, i) in timeline" :key="i" class="bm-phase">
-                <div class="bm-phase-name">{{ i + 1 }}. {{ s.stage }}</div>
-                <div class="bm-phase-focus">{{ s.focus }}</div>
-              </div>
-            </div>
-          </div>
-        </el-collapse-transition>
-      </div>
-
       <!-- 关键角色与团队(置于方向卡片前) -->
       <div v-if="roles && roles.length" class="bm-card bm-roles" :class="{ open: isOpen('__roles__') }">
         <div class="bm-card-bar"></div>
@@ -138,7 +118,6 @@ const dimensions = ref([])
 const roles = ref([])
 const events = ref([])
 const baseline = ref([])
-const timeline = ref([])
 const progress = ref({ status: 'idle', done: 0, total: 0, current: '' })
 const loading = ref(false)
 const openSet = ref(new Set())   // 默认全部折叠收拢
@@ -166,7 +145,6 @@ async function load() {
     roles.value = data.roles || []
     events.value = data.events || []
     baseline.value = data.baseline || []
-    timeline.value = data.timeline || []
     progress.value = data.progress || progress.value
   } finally {
     loading.value = false
