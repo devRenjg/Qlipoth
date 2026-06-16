@@ -217,7 +217,15 @@ async def get_battlemap():
             "updated_at": r["updated_at"] if r else None,
             "generated_by": r["generated_by"] if r else None,
         })
-    return {"dimensions": out, "progress": _PROGRESS}
+    # 关键角色与团队（展示在方向卡片前）
+    roles = None
+    rr = by_dim.get("__roles__")
+    if rr and rr["content_json"]:
+        try:
+            roles = json.loads(rr["content_json"]).get("roles")
+        except Exception:
+            roles = None
+    return {"dimensions": out, "roles": roles, "progress": _PROGRESS}
 
 
 @router.post("/battlemap/generate")
