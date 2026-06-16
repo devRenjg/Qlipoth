@@ -14,71 +14,87 @@
       <el-empty v-if="!anyContent && !loading" description="作战地图尚未生成" />
 
       <!-- 历史大型活动(时间倒序，置于最前) -->
-      <div v-if="events && events.length" class="bm-card bm-events open">
+      <div v-if="events && events.length" class="bm-card bm-events" :class="{ open: isOpen('__events__') }">
         <div class="bm-card-bar"></div>
-        <div class="bm-roles-head">
+        <div class="bm-card-title" @click="toggle('__events__')">
           <span class="bm-dim-ico">🗓️</span>
           <span class="bm-dim">历史大型活动</span>
+          <span class="bm-chevron">▾</span>
         </div>
-        <p class="bm-positioning">我们保障过的历次大型活动(时间倒序)。</p>
-        <div class="bm-timeline">
-          <div v-for="(e, i) in events" :key="i" class="bm-event">
-            <span class="bm-event-time">{{ e.time }}</span>
-            <span class="bm-event-name">{{ e.name }}</span>
-            <span class="bm-event-note">{{ e.note }}</span>
+        <el-collapse-transition>
+          <div v-show="isOpen('__events__')">
+            <div class="bm-timeline">
+              <div v-for="(e, i) in events" :key="i" class="bm-event">
+                <span class="bm-event-time">{{ e.time }}</span>
+                <span class="bm-event-name">{{ e.name }}</span>
+                <span class="bm-event-note">{{ e.note }}</span>
+              </div>
+            </div>
           </div>
-        </div>
+        </el-collapse-transition>
       </div>
 
       <!-- 规模基线:要扛多大的量 -->
-      <div v-if="baseline && baseline.length" class="bm-card bm-baseline open">
+      <div v-if="baseline && baseline.length" class="bm-card bm-baseline" :class="{ open: isOpen('__baseline__') }">
         <div class="bm-card-bar"></div>
-        <div class="bm-roles-head">
+        <div class="bm-card-title" @click="toggle('__baseline__')">
           <span class="bm-dim-ico">📊</span>
           <span class="bm-dim">规模基线 · 要扛多大的量</span>
+          <span class="bm-chevron">▾</span>
         </div>
-        <p class="bm-positioning">历届大型活动的量级基线，建立"要扛多大并发/带宽"的预期。</p>
-        <div class="bm-baseline-grid">
-          <div v-for="(b, i) in baseline" :key="i" class="bm-metric">
-            <div class="bm-metric-top"><span class="bm-metric-name">{{ b.metric }}</span><span class="bm-metric-val">{{ b.value }}</span></div>
-            <div class="bm-metric-note" v-if="b.note">{{ b.note }}</div>
+        <el-collapse-transition>
+          <div v-show="isOpen('__baseline__')">
+            <div class="bm-baseline-grid">
+              <div v-for="(b, i) in baseline" :key="i" class="bm-metric">
+                <div class="bm-metric-top"><span class="bm-metric-name">{{ b.metric }}</span><span class="bm-metric-val">{{ b.value }}</span></div>
+                <div class="bm-metric-note" v-if="b.note">{{ b.note }}</div>
+              </div>
+            </div>
           </div>
-        </div>
+        </el-collapse-transition>
       </div>
 
       <!-- 保障节奏:什么阶段做什么 -->
-      <div v-if="timeline && timeline.length" class="bm-card bm-rhythm open">
+      <div v-if="timeline && timeline.length" class="bm-card bm-rhythm" :class="{ open: isOpen('__timeline__') }">
         <div class="bm-card-bar"></div>
-        <div class="bm-roles-head">
+        <div class="bm-card-title" @click="toggle('__timeline__')">
           <span class="bm-dim-ico">⏱️</span>
           <span class="bm-dim">保障节奏 · 各阶段重点</span>
+          <span class="bm-chevron">▾</span>
         </div>
-        <p class="bm-positioning">一次大型活动保障的标准节奏与各阶段核心工作。</p>
-        <div class="bm-rhythm-flow">
-          <div v-for="(s, i) in timeline" :key="i" class="bm-phase">
-            <div class="bm-phase-name">{{ i + 1 }}. {{ s.stage }}</div>
-            <div class="bm-phase-focus">{{ s.focus }}</div>
+        <el-collapse-transition>
+          <div v-show="isOpen('__timeline__')">
+            <div class="bm-rhythm-flow">
+              <div v-for="(s, i) in timeline" :key="i" class="bm-phase">
+                <div class="bm-phase-name">{{ i + 1 }}. {{ s.stage }}</div>
+                <div class="bm-phase-focus">{{ s.focus }}</div>
+              </div>
+            </div>
           </div>
-        </div>
+        </el-collapse-transition>
       </div>
 
       <!-- 关键角色与团队(置于方向卡片前) -->
-      <div v-if="roles && roles.length" class="bm-card bm-roles open">
+      <div v-if="roles && roles.length" class="bm-card bm-roles" :class="{ open: isOpen('__roles__') }">
         <div class="bm-card-bar"></div>
-        <div class="bm-roles-head">
+        <div class="bm-card-title" @click="toggle('__roles__')">
           <span class="bm-dim-ico">👥</span>
           <span class="bm-dim">历史保障 · 关键角色与团队</span>
+          <span class="bm-chevron">▾</span>
         </div>
-        <p class="bm-positioning">基于历史保障清单沉淀的各职能团队与负责人，帮新负责人快速认识各块归属。</p>
-        <div class="bm-roles-grid">
-          <div v-for="(r, i) in roles" :key="i" class="bm-role">
-            <div class="bm-role-team">{{ r.team }}</div>
-            <div class="bm-role-owners">
-              <span v-for="(o, j) in r.owners" :key="j" class="bm-owner-chip">{{ o }}</span>
+        <el-collapse-transition>
+          <div v-show="isOpen('__roles__')">
+            <div class="bm-roles-grid">
+              <div v-for="(r, i) in roles" :key="i" class="bm-role">
+                <div class="bm-role-team">{{ r.team }}</div>
+                <div class="bm-role-owners">
+                  <span v-for="(o, j) in r.owners" :key="j" class="bm-owner-chip">{{ o }}</span>
+                </div>
+                <div class="bm-role-scope">{{ r.scope }}</div>
+              </div>
             </div>
-            <div class="bm-role-scope">{{ r.scope }}</div>
           </div>
-        </div>
+        </el-collapse-transition>
       </div>
 
       <div v-for="d in dimensions" :key="d.dimension" class="bm-card" :class="{ open: isOpen(d.dimension) }" v-show="d.content">
