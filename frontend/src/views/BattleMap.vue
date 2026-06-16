@@ -30,6 +30,38 @@
         </div>
       </div>
 
+      <!-- 规模基线:要扛多大的量 -->
+      <div v-if="baseline && baseline.length" class="bm-card bm-baseline open">
+        <div class="bm-card-bar"></div>
+        <div class="bm-roles-head">
+          <span class="bm-dim-ico">📊</span>
+          <span class="bm-dim">规模基线 · 要扛多大的量</span>
+        </div>
+        <p class="bm-positioning">历届大型活动的量级基线，建立"要扛多大并发/带宽"的预期。</p>
+        <div class="bm-baseline-grid">
+          <div v-for="(b, i) in baseline" :key="i" class="bm-metric">
+            <div class="bm-metric-top"><span class="bm-metric-name">{{ b.metric }}</span><span class="bm-metric-val">{{ b.value }}</span></div>
+            <div class="bm-metric-note" v-if="b.note">{{ b.note }}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 保障节奏:什么阶段做什么 -->
+      <div v-if="timeline && timeline.length" class="bm-card bm-rhythm open">
+        <div class="bm-card-bar"></div>
+        <div class="bm-roles-head">
+          <span class="bm-dim-ico">⏱️</span>
+          <span class="bm-dim">保障节奏 · 各阶段重点</span>
+        </div>
+        <p class="bm-positioning">一次大型活动保障的标准节奏与各阶段核心工作。</p>
+        <div class="bm-rhythm-flow">
+          <div v-for="(s, i) in timeline" :key="i" class="bm-phase">
+            <div class="bm-phase-name">{{ i + 1 }}. {{ s.stage }}</div>
+            <div class="bm-phase-focus">{{ s.focus }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- 关键角色与团队(置于方向卡片前) -->
       <div v-if="roles && roles.length" class="bm-card bm-roles open">
         <div class="bm-card-bar"></div>
@@ -100,6 +132,8 @@ const api = axios.create({ baseURL: '/api' })
 const dimensions = ref([])
 const roles = ref([])
 const events = ref([])
+const baseline = ref([])
+const timeline = ref([])
 const progress = ref({ status: 'idle', done: 0, total: 0, current: '' })
 const loading = ref(false)
 const openSet = ref(new Set())   // 默认全部折叠收拢
@@ -126,6 +160,8 @@ async function load() {
     dimensions.value = data.dimensions
     roles.value = data.roles || []
     events.value = data.events || []
+    baseline.value = data.baseline || []
+    timeline.value = data.timeline || []
     progress.value = data.progress || progress.value
   } finally {
     loading.value = false
@@ -244,4 +280,17 @@ function viewDoc(doc) {
 .bm-event-time { flex: 0 0 auto; font-size: 12px; color: #5a7bb0; font-weight: 600; min-width: 132px; }
 .bm-event-name { flex: 0 0 auto; font-size: 13.5px; font-weight: 600; color: #1c2f5e; }
 .bm-event-note { font-size: 12.5px; color: #5a6b85; line-height: 1.5; }
+
+/* 规模基线 */
+.bm-baseline-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 12px; }
+.bm-metric { border: 1px solid #e3ebf6; border-radius: 10px; padding: 9px 12px; background: #fafcff; }
+.bm-metric-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.bm-metric-name { font-size: 12.5px; color: #5a6b85; }
+.bm-metric-val { font-size: 14px; font-weight: 700; color: #2f80ff; white-space: nowrap; }
+.bm-metric-note { font-size: 11.5px; color: #8a9bb5; line-height: 1.5; margin-top: 3px; }
+/* 保障节奏 */
+.bm-rhythm-flow { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.bm-phase { border-left: 3px solid #36d1c4; background: #fafcff; border: 1px solid #e3ebf6; border-left: 3px solid #36d1c4; border-radius: 8px; padding: 8px 12px; }
+.bm-phase-name { font-size: 13px; font-weight: 600; color: #1c2f5e; margin-bottom: 3px; }
+.bm-phase-focus { font-size: 12.5px; color: #5a6b85; line-height: 1.6; }
 </style>
