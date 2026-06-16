@@ -13,6 +13,23 @@
     <div v-loading="loading" class="bm-cards">
       <el-empty v-if="!anyContent && !loading" description="作战地图尚未生成" />
 
+      <!-- 历史大型活动(时间倒序，置于最前) -->
+      <div v-if="events && events.length" class="bm-card bm-events open">
+        <div class="bm-card-bar"></div>
+        <div class="bm-roles-head">
+          <span class="bm-dim-ico">🗓️</span>
+          <span class="bm-dim">历史大型活动</span>
+        </div>
+        <p class="bm-positioning">我们保障过的历次大型活动(时间倒序)。</p>
+        <div class="bm-timeline">
+          <div v-for="(e, i) in events" :key="i" class="bm-event">
+            <span class="bm-event-time">{{ e.time }}</span>
+            <span class="bm-event-name">{{ e.name }}</span>
+            <span class="bm-event-note">{{ e.note }}</span>
+          </div>
+        </div>
+      </div>
+
       <!-- 关键角色与团队(置于方向卡片前) -->
       <div v-if="roles && roles.length" class="bm-card bm-roles open">
         <div class="bm-card-bar"></div>
@@ -82,6 +99,7 @@ const api = axios.create({ baseURL: '/api' })
 
 const dimensions = ref([])
 const roles = ref([])
+const events = ref([])
 const progress = ref({ status: 'idle', done: 0, total: 0, current: '' })
 const loading = ref(false)
 const openSet = ref(new Set())   // 默认全部折叠收拢
@@ -107,6 +125,7 @@ async function load() {
     const { data } = await api.get('/battlemap')
     dimensions.value = data.dimensions
     roles.value = data.roles || []
+    events.value = data.events || []
     progress.value = data.progress || progress.value
   } finally {
     loading.value = false
@@ -218,4 +237,11 @@ function viewDoc(doc) {
 .bm-role-owners { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
 .bm-owner-chip { font-size: 12px; color: #1d4ed8; background: #eef4ff; border: 1px solid #c9ddff; border-radius: 12px; padding: 1px 9px; }
 .bm-role-scope { font-size: 12.5px; color: #5a6b85; line-height: 1.6; }
+
+/* 历史大型活动时间线 */
+.bm-timeline { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.bm-event { display: flex; align-items: baseline; gap: 10px; padding: 7px 12px; border-radius: 8px; background: #fafcff; border: 1px solid #e3ebf6; border-left: 3px solid #2f80ff; }
+.bm-event-time { flex: 0 0 auto; font-size: 12px; color: #5a7bb0; font-weight: 600; min-width: 132px; }
+.bm-event-name { flex: 0 0 auto; font-size: 13.5px; font-weight: 600; color: #1c2f5e; }
+.bm-event-note { font-size: 12.5px; color: #5a6b85; line-height: 1.5; }
 </style>
