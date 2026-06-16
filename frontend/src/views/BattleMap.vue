@@ -25,29 +25,18 @@
           <div v-show="isOpen('__events__')">
             <div class="bm-timeline">
               <div v-for="(e, i) in events" :key="i" class="bm-event">
-                <span class="bm-event-time">{{ e.time }}</span>
-                <span class="bm-event-name">{{ e.name }}</span>
-                <span class="bm-event-note">{{ e.note }}</span>
-              </div>
-            </div>
-          </div>
-        </el-collapse-transition>
-      </div>
-
-      <!-- 规模基线:要扛多大的量 -->
-      <div v-if="baseline && baseline.length" class="bm-card bm-baseline" :class="{ open: isOpen('__baseline__') }">
-        <div class="bm-card-bar"></div>
-        <div class="bm-card-title" @click="toggle('__baseline__')">
-          <span class="bm-dim-ico">📊</span>
-          <span class="bm-dim">规模基线 · 要扛多大的量</span>
-          <span class="bm-chevron">▾</span>
-        </div>
-        <el-collapse-transition>
-          <div v-show="isOpen('__baseline__')">
-            <div class="bm-baseline-grid">
-              <div v-for="(b, i) in baseline" :key="i" class="bm-metric">
-                <div class="bm-metric-top"><span class="bm-metric-name">{{ b.metric }}</span><span class="bm-metric-val">{{ b.value }}</span></div>
-                <div class="bm-metric-note" v-if="b.note">{{ b.note }}</div>
+                <div class="bm-event-head">
+                  <span class="bm-event-time">{{ e.time }}</span>
+                  <span class="bm-event-name">{{ e.name }}</span>
+                </div>
+                <div class="bm-event-note" v-if="e.note">{{ e.note }}</div>
+                <div class="bm-event-metrics" v-if="e.metrics && e.metrics.length">
+                  <div v-for="(m, j) in e.metrics" :key="j" class="bm-metric-row">
+                    <span class="bm-metric-k">{{ m.k }}</span>
+                    <span class="bm-metric-v">{{ m.v }}</span>
+                  </div>
+                </div>
+                <div class="bm-event-nodata" v-else>暂无量级数据</div>
               </div>
             </div>
           </div>
@@ -292,10 +281,16 @@ function viewDoc(doc) {
 
 /* 历史大型活动时间线 */
 .bm-timeline { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
-.bm-event { display: flex; align-items: baseline; gap: 10px; padding: 7px 12px; border-radius: 8px; background: #fafcff; border: 1px solid #e3ebf6; border-left: 3px solid #2f80ff; }
-.bm-event-time { flex: 0 0 auto; font-size: 12px; color: #5a7bb0; font-weight: 600; min-width: 132px; }
-.bm-event-name { flex: 0 0 auto; font-size: 13.5px; font-weight: 600; color: #1c2f5e; }
-.bm-event-note { font-size: 12.5px; color: #5a6b85; line-height: 1.5; }
+.bm-event { padding: 10px 14px; border-radius: 8px; background: #fafcff; border: 1px solid #e3ebf6; border-left: 3px solid #2f80ff; }
+.bm-event-head { display: flex; align-items: baseline; gap: 10px; }
+.bm-event-time { font-size: 12px; color: #5a7bb0; font-weight: 600; min-width: 64px; }
+.bm-event-name { font-size: 14px; font-weight: 600; color: #1c2f5e; }
+.bm-event-note { font-size: 12.5px; color: #5a6b85; line-height: 1.5; margin-top: 4px; }
+.bm-event-metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px; margin-top: 8px; }
+.bm-metric-row { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.5; }
+.bm-metric-k { flex: 0 0 auto; color: #5a6b85; min-width: 72px; font-weight: 600; }
+.bm-metric-v { color: #2c4a7c; }
+.bm-event-nodata { font-size: 12px; color: #aab4c5; margin-top: 6px; }
 
 /* 规模基线 */
 .bm-baseline-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 12px; }
