@@ -247,7 +247,6 @@ async def get_battlemap():
     return {"dimensions": out, "events": events, "baseline": baseline,
             "timeline": timeline, "roles": roles, "progress": _PROGRESS}
 
-
 @router.post("/battlemap/generate")
 async def generate_battlemap(request: Request):
     me = await _require_admin(request)
