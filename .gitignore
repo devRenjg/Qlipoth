@@ -23,3 +23,5 @@ backend/.reimport_last_batch.json
 # 企微机器人凭证(敏感,绝不入库)
 .wecom-profiles/
 backend/.wecom_test_cfg/
+
+backend/.reimport_skip.json

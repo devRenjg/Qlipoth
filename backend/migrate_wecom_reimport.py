@@ -108,14 +108,39 @@ def _save_fails(d: dict):
         pass
 
 
+# 人工待复核跳过清单：被判 worse 的文档(多为图片/设计型、API读出正文很少)，
+# 自动记入此清单并在后续每日任务中跳过，避免反复重试浪费配额，待人工判断后处理。
+_SKIP_FILE = os.path.join(os.path.dirname(__file__), ".reimport_skip.json")
+
+
+def _load_skip() -> dict:
+    try:
+        return json.load(open(_SKIP_FILE, encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _add_skip(fn: str, reason: str):
+    d = _load_skip()
+    if fn not in d:
+        d[fn] = {"reason": reason, "added": datetime.now(_BJ).strftime("%Y-%m-%d %H:%M:%S")}
+        try:
+            json.dump(d, open(_SKIP_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        except Exception:
+            pass
+
+
 def _candidates(only: str = "") -> list[str]:
     """有企微链接的 md 文件列表。屡次限流失败的排到队尾，让配额优先用在没试过/能读的文档上。"""
     fails = _load_fails()
+    skip = _load_skip()
     out = []
     for fn in os.listdir(KB):
         if not fn.endswith(".md"):
             continue
         if only and only not in fn:
+            continue
+        if fn in skip:   # 人工待复核，跳过(避免反复重试浪费配额)
             continue
         p = os.path.join(KB, fn)
         head = open(p, encoding="utf-8", errors="replace").read(4000)
@@ -249,6 +274,9 @@ async def main():
             consec_rl = 0
             if r["verdict"] in ("better", "worse", "same") and fn in fails:
                 fails.pop(fn, None)  # 这次读成功了，清掉失败计数
+            # 判定 worse(读成功但有明显倒退)：记入人工待复核跳过清单，后续不再反复重试
+            if write and r["verdict"] == "worse":
+                _add_skip(fn, r.get("reason", "worse"))
         if max_ok and ok >= max_ok:
             print(f"  [达上限] 本批已成功 {ok} 篇，结束", flush=True)
             break
@@ -283,4 +311,20 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    if "--list-skip" in sys.argv:
+        sk = _load_skip()
+        print(f"人工待复核跳过清单 共 {len(sk)} 篇：")
+        for fn, info in sk.items():
+            print(f"  · {fn}\n    原因:{info.get('reason','')} 记于:{info.get('added','')}")
+    elif "--clear-skip" in sys.argv:
+        # 指定文件名移出清单(人工处理后)，或 --clear-skip all 清空
+        target = sys.argv[sys.argv.index("--clear-skip") + 1] if len(sys.argv) > sys.argv.index("--clear-skip") + 1 else ""
+        sk = _load_skip()
+        if target == "all":
+            sk = {}
+        else:
+            sk = {k: v for k, v in sk.items() if target not in k}
+        json.dump(sk, open(_SKIP_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        print(f"已更新跳过清单，剩 {len(sk)} 篇")
+    else:
+        asyncio.run(main())
