@@ -149,7 +149,7 @@ async def chat_completion(messages: list[dict], temperature: float = 0, model: s
             await asyncio.sleep(2 ** attempt)
         try:
             t0 = asyncio.get_event_loop().time()
-            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0), trust_env=False) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 elapsed = asyncio.get_event_loop().time() - t0
                 if resp.status_code >= 500:
@@ -306,7 +306,7 @@ async def _stream_once(messages, settings, base_url, api_format, model: str = ""
     if model:
         payload["model"] = model
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0), trust_env=False) as client:
         async with client.stream("POST", url, json=payload, headers=headers) as resp:
             if resp.status_code >= 400:
                 text = ""
