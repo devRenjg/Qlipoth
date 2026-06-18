@@ -109,9 +109,6 @@ async def upload_file(request: Request, file: UploadFile = File(...), tags: str 
             shutil.copyfileobj(file.file, f)
 
         content = parse_file(str(temp_path))
-        owners = extract_owners(content)
-        if owners:
-            content = f"> 负责人: {', '.join('@' + o for o in owners)}\n\n{content}"
         stored_name = Path(file.filename).stem + ".md"
         stored_path = kb_dir / stored_name
 
@@ -700,10 +697,7 @@ async def _import_confluence_batch(req: "UrlImportRequest"):
 def _build_markdown_with_relations(
     title: str, text: str, url: str, parent_title: str | None, child_titles: list[str]
 ) -> str:
-    owners = extract_owners(text)
     header = f"# {title}\n\n> 来源: {url}\n"
-    if owners:
-        header += f"> 负责人: {', '.join('@' + o for o in owners)}\n"
     if parent_title:
         header += f"> 父文档: {parent_title}\n"
     if child_titles:
