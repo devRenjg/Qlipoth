@@ -43,7 +43,17 @@ export function renderMarkdown(text) {
   }
   const raw = marked.parse(md)
   const safe = DOMPurify.sanitize(raw, { ADD_ATTR: ['target', 'rel'] })
-  return rewriteInfoImages(safe)
+  return forceLinkNewTab(rewriteInfoImages(safe))
+}
+
+// 兜底确保所有链接新标签打开(不依赖 DOMPurify hook 行为)：给 <a ...href...> 强制补 target/rel。
+function forceLinkNewTab(html) {
+  return html.replace(/<a\b([^>]*?)>/gi, (m, attrs) => {
+    if (!/\bhref=/i.test(attrs)) return m
+    let a = attrs
+    a = a.replace(/\s*target=(["']).*?\1/gi, '').replace(/\s*rel=(["']).*?\1/gi, '')
+    return `<a${a} target="_blank" rel="noopener noreferrer">`
+  })
 }
 
 // wiki.example.com 图片需要登录态，浏览器直连会被重定向到登录页而加载失败。
