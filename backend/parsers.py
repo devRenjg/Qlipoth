@@ -5,15 +5,63 @@ from python_calamine import CalamineWorkbook
 from pptx import Presentation
 
 
+def _looks_like_noise_id(name: str) -> bool:
+    """判断 @后内容是否为噪声(企微协作残片/内部ID)，而非真实人名。"""
+    # 纯数字、纯符号、含数字的短串
+    if re.fullmatch(r"[\d_]+", name):
+        return True
+    if re.fullmatch(r"[A-Za-z0-9_]+", name):
+        if len(name) <= 3:
+            return True
+        # 企微协作残片：auto/jauto 前缀、wingding、纯大写+数字混合(非人名)
+        if re.search(r"auto[Z0-9]|wingding|jauto", name, re.I):
+            return True
+        if re.fullmatch(r"[A-Z0-9]{4,}", name):              # ZHCBCDD1Zj / FF0000 全大写数字串
+            return True
+        # 字母+J 开头的残片：eJ/oJ/nJ/fJ/sJ/tJ/vJ/jJ + 任意(含小写 oJll/fJop)
+        if re.match(r"[a-z]J[A-Za-z0-9]", name) or re.match(r"(e[JT]|[onfsvtj]J)", name):
+            return True
+        # j[大写/数字混合]j 残片：jG0Bj / jI1Dj / jW8Rj 等
+        if re.fullmatch(r"j[A-Z0-9][0-9A-Z][A-Za-z0-9]*j?", name):
+            return True
+        # 含大写连串+数字的随机串(ZHCBCDD1Zj 类)，排除正常驼峰人名(首字母大写其余小写)
+        if re.search(r"[A-Z]{3,}", name) and re.search(r"[0-9]", name):
+            return True
+        if re.search(r"P[A-Z0-9]{2,}", name):                # xxPECD / PB25 残片
+            return True
+        if re.fullmatch(r"[a-z0-9]{1,4}", name):             # 纯小写短串
+            return True
+        # 纯小写字母+数字混合的随机串(rzm5v3zp / gf4r6s / rz5ecu7r4u 类残片)
+        if re.fullmatch(r"[a-z0-9]+", name) and re.search(r"[0-9]", name):
+            return True
+        # 纯小写字母随机串残片:rz开头(企微残片特征) 或 元音比过低(辅音堆叠，非真实人名)
+        if re.fullmatch(r"[a-z]{5,}", name):
+            if name.startswith("rz"):
+                return True
+            vowel = sum(1 for c in name if c in "aeiou") / len(name)
+            if vowel < 0.25:
+                return True
+    return False
+
+
+# @后跟的明显是正文短语而非人名的词(误抓)
+_NON_NAME_HINT = re.compile(r"(无法识别|直播间|研发负责人|确认|后台|观看人数|精彩|资源|页面|开启|系统|平台$|项目$)")
+
+
 def extract_owners(text: str) -> list[str]:
-    """Extract @mentioned people from document text as task owners."""
-    matches = re.findall(r'@([一-鿿\w]{2,10})', text)
+    """从文档中提取 @提及 的真实人名作为负责人，过滤企微协作残片/内部ID/正文误抓。"""
+    matches = re.findall(r"@([一-鿿\w]{2,10})", text)
     seen = set()
     owners = []
     for name in matches:
-        if name not in seen:
-            seen.add(name)
-            owners.append(name)
+        if name in seen:
+            continue
+        seen.add(name)
+        if _looks_like_noise_id(name):          # 噪声ID残片
+            continue
+        if _NON_NAME_HINT.search(name):         # @后跟的是正文短语
+            continue
+        owners.append(name)
     return owners
 
 
