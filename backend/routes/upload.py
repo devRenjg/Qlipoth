@@ -274,7 +274,7 @@ async def upload_from_url(req: UrlImportRequest, request: Request):
 
         content = _build_markdown_with_relations(
             result["title"], result["content"], result["url"],
-            parent_title, child_titles
+            parent_title, child_titles, result.get("parent_url")
         )
 
         stored_name, doc_id = await _save_document(result["title"], content, result["url"], parent_title)
@@ -695,11 +695,15 @@ async def _import_confluence_batch(req: "UrlImportRequest"):
 
 
 def _build_markdown_with_relations(
-    title: str, text: str, url: str, parent_title: str | None, child_titles: list[str]
+    title: str, text: str, url: str, parent_title: str | None, child_titles: list[str],
+    parent_url: str | None = None,
 ) -> str:
-    header = f"# {title}\n\n> 来源: {url}\n"
+    header = f"# {title}\n\n> 来源: {url.split('?')[0]}\n"
     if parent_title:
-        header += f"> 父文档: {parent_title}\n"
+        if parent_url:
+            header += f"> 父文档: {parent_title}（{parent_url.split('?')[0]}）\n"
+        else:
+            header += f"> 父文档: {parent_title}\n"
     if child_titles:
         header += f"> 子文档: {', '.join(child_titles)}\n"
     header += "\n"
