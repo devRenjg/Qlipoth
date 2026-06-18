@@ -698,12 +698,12 @@ def _build_markdown_with_relations(
     title: str, text: str, url: str, parent_title: str | None, child_titles: list[str],
     parent_url: str | None = None,
 ) -> str:
-    header = f"# {title}\n\n> 来源: {url.split('?')[0]}\n"
+    header = f"# {title}\n\n> 来源: [{title}]({url.split('?')[0]})\n"
     if parent_title:
         if parent_url:
-            header += f"> 父文档: {parent_title}（{parent_url.split('?')[0]}）\n"
+            header += f"\n> 父文档: [{parent_title}]({parent_url.split('?')[0]})\n"
         else:
-            header += f"> 父文档: {parent_title}\n"
+            header += f"\n> 父文档: {parent_title}\n"
     if child_titles:
         header += f"> 子文档: {', '.join(child_titles)}\n"
     header += "\n"
