@@ -35,8 +35,16 @@ _GARBLE_RE = re.compile("|".join(_GARBLE))
 
 
 def _src_url(md: str) -> str:
-    m = re.search(r"^>\s*来源:\s*(\S+)", md, re.M)
-    return m.group(1) if m else ""
+    m = re.search(r"^>\s*来源[:：]\s*(.+)$", md, re.M)
+    if not m:
+        return ""
+    val = m.group(1).strip()
+    # 兼容 markdown 链接格式 [名](url) 与纯 url
+    link = re.search(r"\((https?://\S+?)\)", val)
+    if link:
+        return link.group(1)
+    bare = re.search(r"(https?://\S+)", val)
+    return bare.group(1) if bare else ""
 
 
 def _header(md: str) -> str:
