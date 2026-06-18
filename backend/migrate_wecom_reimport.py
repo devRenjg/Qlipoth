@@ -130,6 +130,30 @@ def _add_skip(fn: str, reason: str):
             pass
 
 
+# 人工确认放行清单：经人工判断"API少读的是噪声/图里文字已抽取、新版可用"的文档，
+# 即使被规则判 worse 也强制用 API 版入库(算新内容)。例:矢量流程图/架构图类文档——
+# 图形是SVG/canvas两版都识别不了，但图里文字API已抽取清晰，应采用新版。
+_FORCE_FILE = os.path.join(os.path.dirname(__file__), ".reimport_force.json")
+
+
+def _load_force() -> list:
+    try:
+        return list(json.load(open(_FORCE_FILE, encoding="utf-8")))
+    except Exception:
+        return []
+
+
+def _is_forced(fn: str) -> bool:
+    return any(k in fn for k in _load_force())
+
+
+def _add_force(key: str):
+    d = _load_force()
+    if key not in d:
+        d.append(key)
+        json.dump(d, open(_FORCE_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+
+
 def _candidates(only: str = "") -> list[str]:
     """有企微链接的 md 文件列表。屡次限流失败的排到队尾，让配额优先用在没试过/能读的文档上。"""
     fails = _load_fails()
@@ -188,9 +212,13 @@ async def _process_one(path: str, sem: asyncio.Semaphore, write: bool, backup_di
     old_m = _metrics(old_md)
     new_m = _metrics(new_md)
     verdict, reason = _judge(old_m, new_m)
+    # 人工确认放行：被判 worse 但在放行清单内(如矢量流程图类，图文字已抽取)，强制采用 API 新版
+    forced = False
+    if verdict == "worse" and _is_forced(fn) and new_m["text_len"] > 50:
+        verdict, reason, forced = "better", f"人工放行(原判:{reason})", True
     rec.update({
         "verdict": verdict, "reason": reason, "landed_imgs": n_img,
-        "old": old_m, "new": new_m,
+        "forced": forced, "old": old_m, "new": new_m,
     })
 
     if write and verdict == "better":
@@ -326,5 +354,15 @@ if __name__ == "__main__":
             sk = {k: v for k, v in sk.items() if target not in k}
         json.dump(sk, open(_SKIP_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         print(f"已更新跳过清单，剩 {len(sk)} 篇")
+    elif "--add-force" in sys.argv:
+        # 人工确认某文档(关键词)放行：即使判worse也强制用API新版入库；并移出跳过清单
+        key = sys.argv[sys.argv.index("--add-force") + 1]
+        _add_force(key)
+        sk = _load_skip()
+        sk = {k: v for k, v in sk.items() if key not in k}
+        json.dump(sk, open(_SKIP_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        print(f"已加入放行清单: {key}；并移出跳过清单(剩{len(sk)}篇)。下次重导将强制用API版入库")
+    elif "--list-force" in sys.argv:
+        print("人工放行清单:", _load_force())
     else:
         asyncio.run(main())
