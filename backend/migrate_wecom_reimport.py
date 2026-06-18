@@ -166,6 +166,28 @@ def _add_force(key: str):
         json.dump(d, open(_FORCE_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 
 
+# 优先导入清单：人工指定的文档(关键词)，在候选中排到最前，确保配额优先用于这些
+_PRIORITY_FILE = os.path.join(os.path.dirname(__file__), ".reimport_priority.json")
+
+
+def _load_priority() -> list:
+    try:
+        return list(json.load(open(_PRIORITY_FILE, encoding="utf-8")))
+    except Exception:
+        return []
+
+
+def _is_priority(fn: str) -> bool:
+    return any(k in fn for k in _load_priority())
+
+
+def _add_priority(key: str):
+    d = _load_priority()
+    if key not in d:
+        d.append(key)
+        json.dump(d, open(_PRIORITY_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+
+
 def _candidates(only: str = "") -> list[str]:
     """有企微链接的 md 文件列表。屡次限流失败的排到队尾，让配额优先用在没试过/能读的文档上。"""
     fails = _load_fails()
@@ -182,8 +204,9 @@ def _candidates(only: str = "") -> list[str]:
         head = open(p, encoding="utf-8", errors="replace").read(4000)
         if re.search(r"(doc|sheet|slide)\.weixin\.qq\.com", head):
             out.append(p)
-    # 排序：失败次数少的在前（0 次=没试过/能读，优先），同次数按文件名
-    out.sort(key=lambda p: (fails.get(os.path.basename(p), 0), os.path.basename(p)))
+    # 排序：①优先清单最前 ②失败次数少的在前(0次=没试过/能读) ③同次数按文件名
+    out.sort(key=lambda p: (0 if _is_priority(os.path.basename(p)) else 1,
+                            fails.get(os.path.basename(p), 0), os.path.basename(p)))
     return out
 
 
@@ -376,5 +399,11 @@ if __name__ == "__main__":
         print(f"已加入放行清单: {key}；并移出跳过清单(剩{len(sk)}篇)。下次重导将强制用API版入库")
     elif "--list-force" in sys.argv:
         print("人工放行清单:", _load_force())
+    elif "--add-priority" in sys.argv:
+        key = sys.argv[sys.argv.index("--add-priority") + 1]
+        _add_priority(key)
+        print(f"已加入优先导入清单: {key}（下次重导排最前）")
+    elif "--list-priority" in sys.argv:
+        print("优先导入清单:", _load_priority())
     else:
         asyncio.run(main())

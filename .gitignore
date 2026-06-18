@@ -26,3 +26,4 @@ backend/.wecom_test_cfg/
 
 backend/.reimport_skip.json
 backend/.reimport_force.json
+backend/.reimport_priority.json
