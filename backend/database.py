@@ -167,6 +167,19 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT (datetime('now', '+8 hours'))
             )
         """)
+        # 作战地图条目反馈(点赞/疑问)：按 维度+条目hash 记录，每用户每条目唯一
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS battlemap_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dimension TEXT NOT NULL,
+                item_hash TEXT NOT NULL,
+                item_text TEXT DEFAULT '',
+                username TEXT NOT NULL,
+                fb_type TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT (datetime('now', '+8 hours')),
+                UNIQUE(dimension, item_hash, username)
+            )
+        """)
         try:
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_activity_user ON user_activity(user_id, id)"

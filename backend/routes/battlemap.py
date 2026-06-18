@@ -199,6 +199,38 @@ async def _require_admin(request: Request) -> dict:
     return {"username": row["username"]}
 
 
+async def _require_login(request: Request) -> dict:
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        raise HTTPException(401, "未登录")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute("SELECT username FROM users WHERE token = ?", (token,))).fetchone()
+    if not row:
+        raise HTTPException(401, "登录已失效")
+    return {"username": row["username"]}
+
+
+def item_hash(text: str) -> str:
+    """条目内容指纹(稳定标识，条目顺序变化也不丢反馈)。"""
+    import hashlib
+    return hashlib.md5(text.strip().encode("utf-8")).hexdigest()[:16]
+
+
+async def _feedback_map(dim: str) -> dict:
+    """返回 {item_text: {like:[用户...], question:[用户...]}}，前端按条目文本直接查。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            "SELECT item_text, username, fb_type FROM battlemap_feedback WHERE dimension = ? AND item_text != ''", (dim,))).fetchall()
+    fb = {}
+    for r in rows:
+        d = fb.setdefault(r["item_text"], {"like": [], "question": []})
+        if r["fb_type"] in d:
+            d[r["fb_type"]].append(r["username"])
+    return fb
+
+
 @router.get("/battlemap")
 async def get_battlemap():
     """读取 6 方向最新卡片（全体只读）。"""
@@ -216,6 +248,7 @@ async def get_battlemap():
             "source_doc_count": r["source_doc_count"] if r else 0,
             "updated_at": r["updated_at"] if r else None,
             "generated_by": r["generated_by"] if r else None,
+            "feedback": await _feedback_map(dim),
         })
     # 关键角色与团队（展示在方向卡片前）
     roles = None
@@ -247,3 +280,35 @@ async def generate_battlemap(request: Request):
 @router.get("/battlemap/progress")
 async def battlemap_progress():
     return _PROGRESS
+
+
+@router.post("/battlemap/feedback")
+async def battlemap_feedback(request: Request):
+    """对作战地图某条目点赞/疑问。同一用户对同一条目再次点同类型=取消，点另一类型=切换。"""
+    me = await _require_login(request)
+    body = await request.json()
+    dim = (body.get("dimension") or "").strip()
+    text = (body.get("item_text") or "").strip()
+    fb_type = body.get("type")
+    if not dim or not text or fb_type not in ("like", "question"):
+        raise HTTPException(400, "参数错误")
+    ih = item_hash(text)
+    user = me["username"]
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await (await db.execute(
+            "SELECT fb_type FROM battlemap_feedback WHERE dimension=? AND item_hash=? AND username=?",
+            (dim, ih, user))).fetchone()
+        if cur and cur["fb_type"] == fb_type:
+            # 再次点同类型 → 取消
+            await db.execute("DELETE FROM battlemap_feedback WHERE dimension=? AND item_hash=? AND username=?",
+                             (dim, ih, user))
+        else:
+            # 新增或切换类型
+            await db.execute(
+                "INSERT INTO battlemap_feedback (dimension,item_hash,item_text,username,fb_type) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(dimension,item_hash,username) DO UPDATE SET fb_type=excluded.fb_type, "
+                "item_text=excluded.item_text, created_at=datetime('now','+8 hours')",
+                (dim, ih, text, user, fb_type))
+        await db.commit()
+    return {"ok": True, "feedback": (await _feedback_map(dim)).get(text, {"like": [], "question": []})}

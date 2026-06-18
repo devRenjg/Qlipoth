@@ -79,15 +79,54 @@
             <template v-if="d.content">
               <div class="bm-sec" v-if="d.content.key_systems?.length">
                 <div class="bm-sec-h">🔧 关键系统 / 链路</div>
-                <ul><li v-for="(x,i) in d.content.key_systems" :key="i">{{ x }}</li></ul>
+                <ul><li v-for="(x,i) in d.content.key_systems" :key="i" class="bm-item">
+                  <div class="bm-item-row"><span class="bm-item-txt">{{ x }}</span>{{ '' }}
+                    <span class="bm-fb">
+                      <el-tooltip content="点赞：这条对我有帮助" placement="top">
+                        <span class="fb-btn" :class="{ on: mine(d,x)==='like' }" @click="vote(d,x,'like')">👍<i v-if="cnt(d,x,'like')">{{ cnt(d,x,'like') }}</i></span>
+                      </el-tooltip>
+                      <el-tooltip content="疑问：认可方向但想了解更多细节" placement="top">
+                        <span class="fb-btn" :class="{ on: mine(d,x)==='question' }" @click="vote(d,x,'question')">❓<i v-if="cnt(d,x,'question')">{{ cnt(d,x,'question') }}</i></span>
+                      </el-tooltip>
+                    </span>
+                  </div>
+                  <div class="bm-fb-who" v-if="who(d,x,'like')">👍 {{ who(d,x,'like') }} 认为有用</div>
+                  <div class="bm-fb-who q" v-if="who(d,x,'question')">❓ {{ who(d,x,'question') }} 有疑问</div>
+                </li></ul>
               </div>
               <div class="bm-sec" v-if="d.content.history?.length">
                 <div class="bm-sec-h">📜 历史发生过什么</div>
-                <ul><li v-for="(x,i) in d.content.history" :key="i">{{ x }}</li></ul>
+                <ul><li v-for="(x,i) in d.content.history" :key="i" class="bm-item">
+                  <div class="bm-item-row"><span class="bm-item-txt">{{ x }}</span>
+                    <span class="bm-fb">
+                      <el-tooltip content="点赞：这条对我有帮助" placement="top">
+                        <span class="fb-btn" :class="{ on: mine(d,x)==='like' }" @click="vote(d,x,'like')">👍<i v-if="cnt(d,x,'like')">{{ cnt(d,x,'like') }}</i></span>
+                      </el-tooltip>
+                      <el-tooltip content="疑问：认可方向但想了解更多细节" placement="top">
+                        <span class="fb-btn" :class="{ on: mine(d,x)==='question' }" @click="vote(d,x,'question')">❓<i v-if="cnt(d,x,'question')">{{ cnt(d,x,'question') }}</i></span>
+                      </el-tooltip>
+                    </span>
+                  </div>
+                  <div class="bm-fb-who" v-if="who(d,x,'like')">👍 {{ who(d,x,'like') }} 认为有用</div>
+                  <div class="bm-fb-who q" v-if="who(d,x,'question')">❓ {{ who(d,x,'question') }} 有疑问</div>
+                </li></ul>
               </div>
               <div class="bm-sec" v-if="d.content.pitfalls?.length">
                 <div class="bm-sec-h">⚠ 水深的地方（重点警惕）</div>
-                <ul><li v-for="(x,i) in d.content.pitfalls" :key="i">{{ x }}</li></ul>
+                <ul><li v-for="(x,i) in d.content.pitfalls" :key="i" class="bm-item">
+                  <div class="bm-item-row"><span class="bm-item-txt">{{ x }}</span>
+                    <span class="bm-fb">
+                      <el-tooltip content="点赞：这条对我有帮助" placement="top">
+                        <span class="fb-btn" :class="{ on: mine(d,x)==='like' }" @click="vote(d,x,'like')">👍<i v-if="cnt(d,x,'like')">{{ cnt(d,x,'like') }}</i></span>
+                      </el-tooltip>
+                      <el-tooltip content="疑问：认可方向但想了解更多细节" placement="top">
+                        <span class="fb-btn" :class="{ on: mine(d,x)==='question' }" @click="vote(d,x,'question')">❓<i v-if="cnt(d,x,'question')">{{ cnt(d,x,'question') }}</i></span>
+                      </el-tooltip>
+                    </span>
+                  </div>
+                  <div class="bm-fb-who" v-if="who(d,x,'like')">👍 {{ who(d,x,'like') }} 认为有用</div>
+                  <div class="bm-fb-who q" v-if="who(d,x,'question')">❓ {{ who(d,x,'question') }} 有疑问</div>
+                </li></ul>
               </div>
               <div class="bm-sec" v-if="d.content.recommended_docs?.length">
                 <div class="bm-sec-h">📌 建议先看</div>
@@ -108,11 +147,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, inject } from 'vue'
+import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import { TAG_TO_ICON } from '../dimensions.js'
 
 const api = axios.create({ baseURL: '/api' })
+const currentUser = inject('currentUser')
+const myName = computed(() => currentUser?.value?.username || '')
 
 const dimensions = ref([])
 const roles = ref([])
@@ -133,6 +175,31 @@ function toggle(dim) {
   openSet.value = s
 }
 function dimIcon(dim) { return TAG_TO_ICON[dim] || '📂' }
+
+// —— 条目反馈(点赞/疑问) ——
+function _fb(d, x) { return (d.feedback && d.feedback[x]) || { like: [], question: [] } }
+function cnt(d, x, type) { return _fb(d, x)[type]?.length || 0 }
+function who(d, x, type) {
+  const arr = _fb(d, x)[type] || []
+  if (!arr.length) return ''
+  return arr.length <= 3 ? arr.join('、') : `${arr.slice(0, 3).join('、')} 等${arr.length}人`
+}
+function mine(d, x) {
+  const f = _fb(d, x), me = myName.value
+  if (f.like?.includes(me)) return 'like'
+  if (f.question?.includes(me)) return 'question'
+  return ''
+}
+async function vote(d, x, type) {
+  if (!myName.value) { ElMessage.warning('请先登录'); return }
+  try {
+    const { data } = await api.post('/battlemap/feedback', { dimension: d.dimension, item_text: x, type })
+    if (!d.feedback) d.feedback = {}
+    d.feedback[x] = data.feedback   // 后端返回该条目最新反馈
+  } catch (e) {
+    ElMessage.error('操作失败：' + (e.response?.data?.detail || e.message))
+  }
+}
 
 onMounted(() => { load(); timer = setInterval(pollIfGenerating, 5000) })
 onUnmounted(() => { if (timer) clearInterval(timer) })
@@ -228,6 +295,20 @@ function viewDoc(doc) {
 }
 .bm-sec ul { margin: 0; padding-left: 18px; }
 .bm-sec li { font-size: 13px; color: #475569; line-height: 1.75; }
+.bm-item { margin-bottom: 4px; }
+.bm-item-row { display: flex; align-items: flex-start; gap: 8px; }
+.bm-item-txt { flex: 1; }
+.bm-fb { flex: 0 0 auto; display: inline-flex; gap: 4px; white-space: nowrap; }
+.fb-btn {
+  cursor: pointer; user-select: none; font-size: 13px; line-height: 1;
+  padding: 2px 6px; border-radius: 10px; border: 1px solid transparent;
+  display: inline-flex; align-items: center; gap: 3px; transition: background .15s, border-color .15s;
+}
+.fb-btn:hover { background: #eef4ff; }
+.fb-btn.on { background: #e3edff; border-color: #9cc0ff; }
+.fb-btn i { font-style: normal; font-size: 11px; color: #2f6bd6; font-weight: 600; }
+.bm-fb-who { font-size: 11.5px; color: #5a7bb0; margin: 1px 0 0 2px; }
+.bm-fb-who.q { color: #d97a1a; }
 
 /* 建议先看：做成可点击的胶囊标签，区别于纯文字 */
 .bm-docs { display: flex; flex-wrap: wrap; gap: 8px; }
