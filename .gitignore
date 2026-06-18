@@ -25,3 +25,4 @@ backend/.reimport_last_batch.json
 backend/.wecom_test_cfg/
 
 backend/.reimport_skip.json
+backend/.reimport_force.json
