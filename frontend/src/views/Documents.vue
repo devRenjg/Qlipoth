@@ -25,7 +25,12 @@
     </div>
 
     <el-table :data="pagedDocs" stripe v-loading="loading" empty-text="暂无文档">
-      <el-table-column prop="original_name" label="文件名" />
+      <el-table-column label="文件名" min-width="240">
+        <template #default="{ row }">
+          <span class="src-badge" :class="srcType(row).cls">{{ srcType(row).label }}</span>
+          {{ row.original_name }}
+        </template>
+      </el-table-column>
       <el-table-column label="标签" width="220">
         <template #default="{ row }">
           <span v-for="t in row.tags" :key="t.id" class="doc-tag" :style="tagChipStyle(t.name)">{{ t.name }}</span>
@@ -133,6 +138,14 @@ import 'github-markdown-css/github-markdown-light.css'
 
 const currentUser = inject('currentUser')
 const isAdmin = computed(() => currentUser?.value?.role === 'admin')
+
+// 文档来源标签：企微 / Info / 其他
+function srcType(row) {
+  const u = row.source_url || ''
+  if (u.includes('doc.weixin.qq.com')) return { label: '企微', cls: 'src-wecom' }
+  if (u.includes('info.example')) return { label: 'Info', cls: 'src-info' }
+  return { label: '其他', cls: 'src-other' }
+}
 
 const documents = ref([])
 const tags = ref([])
@@ -331,6 +344,14 @@ function formatSize(bytes) {
 </script>
 
 <style scoped>
+.src-badge {
+  display: inline-block; font-size: 11px; line-height: 1.4;
+  padding: 1px 7px; border-radius: 4px; margin-right: 8px;
+  font-weight: 600; vertical-align: middle;
+}
+.src-wecom { background: #eef4ff; color: #2f6bd6; border: 1px solid #c9ddff; }
+.src-info { background: #fff3e6; color: #d97a1a; border: 1px solid #ffd9a8; }
+.src-other { background: #f0f2f5; color: #909399; border: 1px solid #e0e3e8; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .header-controls { display: flex; gap: 10px; align-items: center; }
 .doc-count { font-size: 14px; font-weight: normal; color: #909399; margin-left: 8px; }
