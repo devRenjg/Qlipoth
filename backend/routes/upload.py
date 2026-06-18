@@ -698,10 +698,7 @@ def _build_markdown_with_relations(
     title: str, text: str, url: str, parent_title: str | None, child_titles: list[str],
     parent_url: str | None = None,
 ) -> str:
-    # 企微文档：不加首行 # 标题(正文自带标题、避免重复)；其他来源(Confluence等)保留标题
-    is_wecom = "doc.weixin.qq.com" in (url or "")
-    header = "" if is_wecom else f"# {title}\n\n"
-    header += f"> 来源: [{title}]({url.split('?')[0]})\n"
+    header = f"# {title}\n\n> 来源: [{title}]({url.split('?')[0]})\n"
     if parent_title:
         if parent_url:
             header += f"\n> 父文档: [{parent_title}]({parent_url.split('?')[0]})\n"
