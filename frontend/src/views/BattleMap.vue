@@ -171,8 +171,10 @@ const anyContent = computed(() => dimensions.value.some(d => d.content))
 function isOpen(dim) { return openSet.value.has(dim) }
 function toggle(dim) {
   const s = new Set(openSet.value)
+  const opening = !s.has(dim)
   s.has(dim) ? s.delete(dim) : s.add(dim)
   openSet.value = s
+  if (opening) refreshFeedback()   // 展开时拉取最新反馈(看到他人点赞/疑问)
 }
 function dimIcon(dim) { return TAG_TO_ICON[dim] || '📂' }
 
@@ -194,11 +196,21 @@ async function vote(d, x, type) {
   if (!myName.value) { ElMessage.warning('请先登录'); return }
   try {
     const { data } = await api.post('/battlemap/feedback', { dimension: d.dimension, item_text: x, type })
-    if (!d.feedback) d.feedback = {}
-    d.feedback[x] = data.feedback   // 后端返回该条目最新反馈
+    // 整体替换 feedback 对象，确保 Vue 响应式更新视图
+    d.feedback = { ...(d.feedback || {}), [x]: data.feedback }
   } catch (e) {
     ElMessage.error('操作失败：' + (e.response?.data?.detail || e.message))
   }
+}
+
+// 刷新所有维度的反馈数据(看到他人最新点赞/疑问)
+async function refreshFeedback() {
+  try {
+    const { data } = await api.get('/battlemap')
+    const fbByDim = {}
+    for (const dd of data.dimensions) fbByDim[dd.dimension] = dd.feedback || {}
+    for (const d of dimensions.value) d.feedback = fbByDim[d.dimension] || {}
+  } catch (e) { /* 静默 */ }
 }
 
 onMounted(() => { load(); timer = setInterval(pollIfGenerating, 5000) })
