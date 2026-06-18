@@ -139,8 +139,9 @@ import 'github-markdown-css/github-markdown-light.css'
 const currentUser = inject('currentUser')
 const isAdmin = computed(() => currentUser?.value?.role === 'admin')
 
-// 文档来源标签：企微 / Info / 其他
+// 文档来源标签：Mind / 企微 / Info / 其他
 function srcType(row) {
+  if (row.doc_format === 'mind') return { label: 'Mind', cls: 'src-mind' }
   const u = row.source_url || ''
   if (u.includes('doc.weixin.qq.com')) return { label: '企微', cls: 'src-wecom' }
   if (u.includes('info.example')) return { label: 'Info', cls: 'src-info' }
@@ -351,6 +352,7 @@ function formatSize(bytes) {
 }
 .src-wecom { background: #eef4ff; color: #2f6bd6; border: 1px solid #c9ddff; }
 .src-info { background: #fff3e6; color: #d97a1a; border: 1px solid #ffd9a8; }
+.src-mind { background: #f0ebff; color: #7c4dd6; border: 1px solid #d9c9ff; }
 .src-other { background: #f0f2f5; color: #909399; border: 1px solid #e0e3e8; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .header-controls { display: flex; gap: 10px; align-items: center; }
