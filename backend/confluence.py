@@ -1,11 +1,15 @@
-"""Confluence (wiki.example.com) page scraper.
+"""Confluence-style wiki page scraper (provider).
 
-Unlike the Tencent-doc scraper (Playwright-based, discovers sub-docs from inline
-links), Confluence exposes a real page tree via REST API, so we fetch the root
-page plus ALL descendants directly. No headless browser needed.
+Unlike the Playwright-based online-doc scraper (discovers sub-docs from inline
+links), a Confluence-style wiki exposes a real page tree via REST API, so we
+fetch the root page plus ALL descendants directly. No headless browser needed.
 
-Auth: cookie via browser_cookie3 (Chrome -> Edge), falling back to ~/.wiki_cookie.
+配置(通过环境变量注入，公开仓库默认不含任何真实内部地址)：
+- CONFLUENCE_BASE_URL : wiki 站点根 URL，如 https://wiki.example.com
+- CONFLUENCE_COOKIE_FILE : 存放鉴权 cookie 的本地文件路径(默认 ~/.wiki_cookie)
+未配置 CONFLUENCE_BASE_URL 时该 provider 不启用。
 """
+import os
 import re
 import html as _html
 from pathlib import Path
@@ -13,9 +17,9 @@ from urllib.parse import urlparse, parse_qs
 
 import httpx
 
-BASE_URL = "https://wiki.example.com"
-ALLOWED_HOSTS = {"wiki.example.com"}
-COOKIE_FILE = Path.home() / ".wiki_cookie"
+BASE_URL = os.environ.get("CONFLUENCE_BASE_URL", "").rstrip("/")
+ALLOWED_HOSTS = {urlparse(BASE_URL).hostname} if BASE_URL else set()
+COOKIE_FILE = Path(os.environ.get("CONFLUENCE_COOKIE_FILE", str(Path.home() / ".wiki_cookie")))
 
 try:
     import browser_cookie3  # noqa
@@ -33,7 +37,7 @@ class ConfluenceAuthError(ConfluenceError):
 
 
 def validate_confluence_url(url: str) -> bool:
-    """True if url is an wiki.example.com http(s) link."""
+    """True if url points to the configured wiki host."""
     try:
         parsed = urlparse(url)
         return parsed.scheme in ("http", "https") and parsed.hostname in ALLOWED_HOSTS
@@ -61,18 +65,20 @@ _cookie_cache: dict[str, object] = {"value": None, "mtime": None}
 
 
 def _get_cookie(force_browser: bool = False) -> str:
-    """Cookie for wiki.example.com.
+    """Cookie for the configured wiki host.
 
     Resolution order, fastest-first:
       1. In-memory cache (keyed on the cookie file's mtime, so editing the file
          invalidates it). This matters because the image proxy calls this once
-         per image — without caching, 120 images × a multi-second browser read
-         would block the event loop and take the whole backend down.
-      2. ~/.wiki_cookie file (instant, reliable).
+         per image — without caching, many images × a multi-second browser read
+         would block the event loop.
+      2. Cookie file (instant, reliable) — path from CONFLUENCE_COOKIE_FILE.
       3. Browser (Chrome -> Edge) as a last resort. Chrome 127+ App-Bound
-         Encryption makes this both slow (multi-second) and usually doomed, so
-         it is NOT tried unless the file is absent.
+         Encryption makes this both slow and usually doomed, so it is NOT tried
+         unless the file is absent.
     """
+    auth_cookie = os.environ.get("CONFLUENCE_AUTH_COOKIE", "SESSIONID")
+    host = next(iter(ALLOWED_HOSTS), "") if ALLOWED_HOSTS else ""
     # 1. file (preferred) + cache
     if COOKIE_FILE.exists():
         mtime = COOKIE_FILE.stat().st_mtime
@@ -85,20 +91,20 @@ def _get_cookie(force_browser: bool = False) -> str:
             return cookie
 
     # 2. browser fallback (slow / often fails on Chrome 127+); only when no file
-    if HAS_BROWSER_COOKIE3:
+    if HAS_BROWSER_COOKIE3 and host:
         for name in ("chrome", "edge"):
             try:
                 loader = getattr(browser_cookie3, name)
-                cj = loader(domain_name="wiki.example.com")
+                cj = loader(domain_name=host)
                 cookie = "; ".join(f"{c.name}={c.value}" for c in cj)
-                if cookie and "SESSIONID" in cookie:
+                if cookie and auth_cookie in cookie:
                     return cookie
             except Exception:
                 continue
 
     raise ConfluenceAuthError(
-        "无法获取 wiki.example.com 登录态：Chrome 新版 cookie 加密无法自动读取，"
-        f"请在 Chrome 登录后将 SESSIONID 写入 {COOKIE_FILE}（内容：SESSIONID=xxx）"
+        f"无法获取 wiki 登录态：请在浏览器登录后将 {auth_cookie} 写入 {COOKIE_FILE}"
+        f"（内容：{auth_cookie}=xxx）"
     )
 
 
@@ -248,7 +254,7 @@ class ConfluenceClient:
     def __init__(self, cookie: str | None = None):
         self.cookie = cookie or _get_cookie()
         self.headers = {"Cookie": self.cookie, "Accept": "application/json"}
-        # wiki.example.com is internal; TLS may not chain to a public root.
+        # internal wiki host TLS may not chain to a public root.
         self.client = httpx.Client(base_url=BASE_URL, headers=self.headers, timeout=30, verify=False)
 
     def close(self):
@@ -268,7 +274,7 @@ class ConfluenceClient:
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
             if status in (401, 403):
-                raise ConfluenceAuthError("认证失败或无权限，请确认 wiki.example.com 登录态有效且有该页面权限")
+                raise ConfluenceAuthError("认证失败或无权限，请确认 wiki 登录态有效且有该页面权限")
             if status == 404:
                 raise ConfluenceError("页面不存在")
             raise ConfluenceError(f"请求失败 (HTTP {status})")
@@ -319,7 +325,7 @@ def scrape_confluence_recursive(url: str, on_progress=None) -> list[dict]:
     produced, so callers can stream progress.
     """
     if not validate_confluence_url(url):
-        raise ValueError("不支持的链接，仅支持 wiki.example.com")
+        raise ValueError("不支持的链接，仅支持已配置的 wiki 站点")
 
     root_id = extract_page_id(url)
     client = ConfluenceClient()

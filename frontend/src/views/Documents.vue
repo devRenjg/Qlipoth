@@ -144,7 +144,7 @@ function srcType(row) {
   if (row.doc_format === 'mind') return { label: 'Mind', cls: 'src-mind' }
   const u = row.source_url || ''
   if (u.includes('doc.weixin.qq.com')) return { label: '企微', cls: 'src-wecom' }
-  if (u.includes('info.example')) return { label: 'Info', cls: 'src-info' }
+  if (u.includes('wiki.example.com')) return { label: 'Wiki', cls: 'src-info' }
   return { label: '其他', cls: 'src-other' }
 }
 

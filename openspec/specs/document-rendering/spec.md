@@ -52,9 +52,9 @@
 
 ### Requirement: 在线文档图片渲染
 
-文档渲染 SHALL 正确显示图片。企微 API 落地的本地图片经 `/api/documents/kb-image/{name}` 同源服务直接显示；wiki.example.com 图片经携带 cookie 的服务端代理 `/api/documents/img-proxy` 显示。
+文档渲染 SHALL 正确显示图片。企微 API 落地的本地图片经 `/api/documents/kb-image/{name}` 同源服务直接显示；内部 wiki 图片经携带 cookie 的服务端代理 `/api/documents/img-proxy` 显示。
 
 #### Scenario: info 图片经代理显示
 
-- **WHEN** 渲染含 wiki.example.com 图片的文档
+- **WHEN** 渲染含内部 wiki 图片的文档
 - **THEN** 图片经服务端 cookie 代理加载显示，而非因登录态缺失而失败

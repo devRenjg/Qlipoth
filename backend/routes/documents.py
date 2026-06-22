@@ -12,11 +12,14 @@ from searcher import read_file_content
 
 router = APIRouter(tags=["documents"])
 
-# wiki.example.com 图片需要登录态 cookie，浏览器直连会被重定向到登录页。
+# 内部 wiki 图片需要登录态 cookie，浏览器直连会被重定向到登录页。
 # 这里做一个服务端代理：带 cookie 取图后回传，前端图片改指向本代理。
 # 取过的图缓存到本地磁盘，避免同一篇文档反复打开时重复回源（120 张图反复
 # 取会把单 worker 的 uvicorn 占满，表现为「服务卡死」）。
-_INFO_IMG_HOSTS = {"wiki.example.com"}
+import os as _os
+# 图片代理白名单 host(从 CONFLUENCE_BASE_URL 推导，未配置则为空、代理不启用)
+from urllib.parse import urlparse as _urlparse
+_INFO_IMG_HOSTS = {_urlparse(_os.environ.get("CONFLUENCE_BASE_URL","")).hostname} - {None} if _os.environ.get("CONFLUENCE_BASE_URL") else set()
 _IMG_CONTENT_TYPES = ("image/",)
 _IMG_CACHE_DIR = Path(__file__).resolve().parent.parent / ".img_cache"
 
@@ -36,7 +39,7 @@ def _ext_to_media(suffix: str) -> str:
 
 @router.get("/documents/img-proxy")
 async def proxy_info_image(url: str, user: dict = Depends(require_login)):
-    """Fetch an wiki.example.com image server-side (with cookie) and return it.
+    """Fetch a whitelisted internal-wiki image server-side (with cookie) and return it.
 
     Disk-cached; only whitelisted hosts are proxied (not an open proxy). 需登录。
     """
@@ -45,7 +48,7 @@ async def proxy_info_image(url: str, user: dict = Depends(require_login)):
     host = parsed.hostname
     # 严格校验：必须 https + host 在白名单(防 SSRF/开放代理)
     if parsed.scheme != "https" or host not in _INFO_IMG_HOSTS:
-        raise HTTPException(400, "仅支持代理 wiki.example.com 的 https 图片")
+        raise HTTPException(400, "仅支持代理已配置 wiki 站点的 https 图片")
 
     # 1. 命中本地缓存 → 直接返回，不回源
     cache_path = _img_cache_path(target)

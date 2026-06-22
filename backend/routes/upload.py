@@ -203,7 +203,7 @@ async def upload_from_url(req: UrlImportRequest, request: Request):
 
     kind = _url_kind(req.url)
     if kind is None:
-        raise HTTPException(400, "不支持的链接，仅支持腾讯文档/企业微信文档（docs.qq.com / doc.weixin.qq.com）或 Confluence（wiki.example.com）")
+        raise HTTPException(400, "不支持的链接，仅支持腾讯文档/企业微信文档（docs.qq.com / doc.weixin.qq.com）或已配置的 wiki 站点")
 
     loop = asyncio.get_event_loop()
 
@@ -321,7 +321,7 @@ async def upload_from_url_stream(req: UrlImportRequest, request: Request):
 
     kind = _url_kind(req.url)
     if kind is None:
-        raise HTTPException(400, "不支持的链接，仅支持腾讯文档/企业微信文档（docs.qq.com / doc.weixin.qq.com）或 Confluence（wiki.example.com）")
+        raise HTTPException(400, "不支持的链接，仅支持腾讯文档/企业微信文档（docs.qq.com / doc.weixin.qq.com）或已配置的 wiki 站点")
 
     if kind == "confluence":
         return await _stream_confluence_import(req)
@@ -518,7 +518,7 @@ async def upload_from_url_stream(req: UrlImportRequest, request: Request):
 
 
 async def _stream_confluence_import(req: "UrlImportRequest"):
-    """SSE import for an wiki.example.com page and ALL its descendant pages.
+    """SSE import for a configured wiki page and ALL its descendant pages.
 
     Confluence exposes a real page tree, so depth is ignored — we always fetch
     the root plus every descendant. Reuses the same落盘/写库/打标/导入树 path
