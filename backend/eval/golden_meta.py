@@ -16,7 +16,7 @@ from config import load_settings  # noqa: E402
 
 ERA_RULES = [
     ("S15/赛事", ("S15", "S赛", "LPL", "lol", "英雄联盟", "竞猜", "赛事", "峡谷")),
-    ("CNY/春晚", ("CNY", "春晚", "活动B", "活动A", "红包", "cny")),
+    ("CNY/春晚", ("CNY", "春晚", "红包", "cny")),
     ("阅兵", ("阅兵",)),
 ]
 

@@ -117,7 +117,7 @@
 
 ### Requirement: Confluence 文档递归导入
 
-系统 SHALL 支持导入 wiki.example.com Confluence 文档，按页面树（`/rest/api/content/{id}/child/page`）递归抓取根页面及其全部后代，去重并保留父子关系。info 文档中的图片 SHALL 通过携带登录 cookie 的服务端代理访问。
+系统 SHALL 支持导入可配置的 Confluence 风格 wiki 文档（站点 URL 经配置注入，公开仓库不含真实内部地址），按页面树（`/rest/api/content/{id}/child/page`）递归抓取根页面及其全部后代，去重并保留父子关系。wiki 文档中需登录态的图片 SHALL 通过携带 cookie 的服务端代理访问。
 
 #### Scenario: 递归抓取页面树
 

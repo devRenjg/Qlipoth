@@ -43,7 +43,7 @@
       </el-tab-pane>
 
       <el-tab-pane label="链接导入" name="url">
-        <p class="tab-desc">输入腾讯文档/企业微信文档或 Confluence(wiki.example.com) 链接，系统将自动抓取内容导入知识库</p>
+        <p class="tab-desc">输入腾讯文档/企业微信文档或已配置的 wiki 链接，系统将自动抓取内容导入知识库</p>
         <div class="url-import">
           <el-input
             v-model="docUrl"
@@ -256,7 +256,7 @@ const urlTags = ref([])
 const allTags = ref([])
 const importTree = ref([])
 
-const isConfluence = computed(() => /(^|\/\/)info\.example\.co\b/i.test(docUrl.value.trim()))
+const isConfluence = computed(() => /(^|\/\/)wiki\.example\.com\b/i.test(docUrl.value.trim()))
 const importHistory = ref([])
 const loadingHistory = ref(false)
 const historyPage = ref(1)

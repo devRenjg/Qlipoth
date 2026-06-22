@@ -18,7 +18,7 @@ const IMG_PATTERNS = [
   // 企微/腾讯文档内容图：...?w=NNN&h=NNN&type=image/xxx（结尾即干净边界，砍掉后续乱码）
   /https?:\/\/[\w.-]*qpic\.cn\/[\w%./~-]+\?w=\d+&h=\d+&type=image\/[a-z]+/gi,
   // 显式图片扩展名（B站图床 examplecdn / 其他）
-  /https?:\/\/(?:[\w-]+\.)?(?:qpic\.cn|gtimg\.cn|example\.com)\/[\w%./~-]+\.(?:png|jpe?g|gif|webp|bmp)(?:@[\w_]+)?/gi,
+  /https?:\/\/(?:[\w-]+\.)?(?:qpic\.cn|gtimg\.cn)\/[\w%./~-]+\.(?:png|jpe?g|gif|webp|bmp)(?:@[\w_]+)?/gi,
 ]
 
 function extractImages(text) {
@@ -56,11 +56,11 @@ function forceLinkNewTab(html) {
   })
 }
 
-// wiki.example.com 图片需要登录态，浏览器直连会被重定向到登录页而加载失败。
+// 内部 wiki 图片需要登录态，浏览器直连会被重定向到登录页而加载失败。
 // 把这些图片改指向后端代理（后端带 cookie 取图后回传）。
 function rewriteInfoImages(html) {
   return html.replace(
-    /(<img\b[^>]*\bsrc=)(["'])(https?:\/\/info\.example\.co\/[^"']+)\2/gi,
+    /(<img\b[^>]*\bsrc=)(["'])(https?:\/\/wiki\.example\.com\/[^"']+)\2/gi,
     (_m, pre, q, url) => `${pre}${q}/api/documents/img-proxy?url=${encodeURIComponent(url)}${q}`
   )
 }

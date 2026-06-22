@@ -27,3 +27,21 @@ backend/.wecom_test_cfg/
 backend/.reimport_skip.json
 backend/.reimport_force.json
 backend/.reimport_priority.json
+
+# 公开发布脱敏：以下为运行时/内部派生/审计文件，本地保留但不入公开仓库
+Soul.md
+backend/Soul.md
+CLAUDE.md
+backend/retry_report.md
+TestReport/
+# 真实评测集与报告(知识库派生数据，可反推内部业务)
+backend/eval/golden_set.json
+backend/eval/golden_set_v150_20260605.json
+backend/eval/golden_v2_candidates.json
+backend/eval/strategy_cache.json
+backend/eval/reports/
+# OpenSpec 内部设计归档(含内部域名/业务/事故细节)
+openspec/changes/archive/
+# 内部业务场景 spec(保障清单/作战地图)不公开
+openspec/specs/battle-checklist/
+openspec/specs/battle-map/
