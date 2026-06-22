@@ -21,6 +21,36 @@ def _now_bj() -> str:
     return datetime.now(_BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
+async def _user_from_token(request: Request) -> dict | None:
+    """从 cookie token 解析当前用户，返回 {id,username,role} 或 None。"""
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute(
+            "SELECT id, username, role FROM users WHERE token = ?", (token,))).fetchone()
+    return {"id": row["id"], "username": row["username"], "role": row["role"]} if row else None
+
+
+async def require_login(request: Request) -> dict:
+    """统一登录依赖：未登录抛 401。用法 user=Depends(require_login)。"""
+    u = await _user_from_token(request)
+    if not u:
+        raise HTTPException(401, "未登录")
+    return u
+
+
+async def require_admin(request: Request) -> dict:
+    """统一管理员依赖：非 admin 抛 403。"""
+    u = await _user_from_token(request)
+    if not u:
+        raise HTTPException(401, "未登录")
+    if u["role"] != "admin":
+        raise HTTPException(403, "需要管理员权限")
+    return u
+
+
 def _hash_password(password: str, salt: str = None) -> tuple[str, str]:
     if not salt:
         salt = secrets.token_hex(16)

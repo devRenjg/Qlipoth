@@ -217,9 +217,25 @@ def _fallback_search(keyword: str, kb_path: Path, file_pattern: str, context_lin
     return results
 
 
+def _safe_kb_path(file_path: str) -> "Path | None":
+    """把 file_path 限定在知识库目录内，防路径穿越。越界/绝对路径/非.md 返回 None。"""
+    if not file_path or file_path.startswith(("/", "\\")) or ".." in file_path.replace("\\", "/").split("/"):
+        return None
+    kb_root = Path(_get_kb_dir()).resolve()
+    try:
+        target = (kb_root / file_path).resolve()
+    except Exception:
+        return None
+    if not target.is_relative_to(kb_root):
+        return None
+    if target.suffix.lower() != ".md":
+        return None
+    return target
+
+
 def read_file_content(file_path: str, start_line: int = 0, end_line: int = -1) -> str:
-    full_path = Path(_get_kb_dir()) / file_path
-    if not full_path.exists():
+    full_path = _safe_kb_path(file_path)
+    if not full_path or not full_path.exists():
         return ""
     lines = full_path.read_text(encoding="utf-8").splitlines()
     if end_line == -1:

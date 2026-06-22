@@ -9,7 +9,7 @@ import json
 import re
 import asyncio
 import aiosqlite
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Depends
 
 from database import DB_PATH
 from config import load_settings
@@ -232,7 +232,7 @@ async def _feedback_map(dim: str) -> dict:
 
 
 @router.get("/battlemap")
-async def get_battlemap():
+async def get_battlemap(user: dict = Depends(_require_login)):
     """读取 6 方向最新卡片（全体只读）。"""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -278,7 +278,7 @@ async def generate_battlemap(request: Request):
 
 
 @router.get("/battlemap/progress")
-async def battlemap_progress():
+async def battlemap_progress(user: dict = Depends(_require_login)):
     return _PROGRESS
 
 
