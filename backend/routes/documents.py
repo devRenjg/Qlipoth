@@ -1,13 +1,13 @@
 from pathlib import Path
 from urllib.parse import urlparse, unquote
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import Response, FileResponse
 import httpx
 from pydantic import BaseModel
 import aiosqlite
 from config import load_settings, save_settings
 from database import DB_PATH
-from auth import COOKIE_NAME
+from auth import COOKIE_NAME, require_login, require_admin
 from searcher import read_file_content
 
 router = APIRouter(tags=["documents"])
@@ -118,7 +118,7 @@ async def _require_admin(request: Request):
 
 
 @router.get("/documents")
-async def list_documents():
+async def list_documents(user: dict = Depends(require_login)):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT * FROM documents ORDER BY uploaded_at DESC")
@@ -140,33 +140,38 @@ async def list_documents():
 
 
 @router.get("/documents/view/{file_name:path}")
-async def view_document_by_file(file_name: str):
+async def view_document_by_file(file_name: str, user: dict = Depends(require_login)):
     """View document content rendered as HTML with markdown styling."""
     return _render_md_html(file_name, read_file_content(file_name))
 
 
 @router.get("/documents/view-old/{file_name:path}")
-async def view_old_document(file_name: str):
+async def view_old_document(file_name: str, user: dict = Depends(require_login)):
     """查看企微重导前的旧版本（存于 knowledge_base_old/）。"""
+    safe_name = Path(file_name).name
+    if not safe_name.endswith(".md"):
+        raise HTTPException(400, "非法文件名")
     old_dir = Path(load_settings().knowledge_base_dir).parent / "knowledge_base_old"
-    fpath = old_dir / Path(file_name).name
+    fpath = old_dir / safe_name
     if not fpath.exists():
         raise HTTPException(404, "无旧版本")
-    return _render_md_html(Path(file_name).name + "（旧版·重导前）", fpath.read_text(encoding="utf-8"))
+    return _render_md_html(safe_name + "（旧版·重导前）", fpath.read_text(encoding="utf-8"))
 
 
 def _render_md_html(title_src: str, content: str):
     from fastapi.responses import HTMLResponse
+    import html as _html
     if not content:
         raise HTTPException(404, "文档不存在")
-    title = title_src.replace(".md", "")
-    html = f"""<!DOCTYPE html>
+    title = _html.escape(title_src.replace(".md", ""))
+    html_doc = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <title>{title}</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-light.min.css">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <style>
 body {{ max-width: 900px; margin: 40px auto; padding: 0 20px; background: #fff; }}
 .markdown-body {{ font-size: 15px; line-height: 1.7; }}
@@ -177,15 +182,18 @@ body {{ max-width: 900px; margin: 40px auto; padding: 0 20px; background: #fff; 
 <article class="markdown-body" id="content"></article>
 <script>
 const raw = {repr(content)};
-document.getElementById('content').innerHTML = marked.parse(raw);
+// 不可信内容(上传/抓取)：marked 渲染后用 DOMPurify 净化再写入，防 XSS
+const dirty = marked.parse(raw);
+document.getElementById('content').innerHTML = DOMPurify.sanitize(dirty, {{ ADD_ATTR: ['target','rel'] }});
+document.querySelectorAll('#content a[href]').forEach(a => {{ a.target='_blank'; a.rel='noopener noreferrer'; }});
 </script>
 </body>
 </html>"""
-    return HTMLResponse(html)
+    return HTMLResponse(html_doc)
 
 
 @router.get("/documents/{doc_id}")
-async def get_document(doc_id: int):
+async def get_document(doc_id: int, user: dict = Depends(require_login)):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
@@ -228,7 +236,7 @@ class DocTagsRequest(BaseModel):
 
 
 @router.get("/tags")
-async def list_tags():
+async def list_tags(user: dict = Depends(require_login)):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -325,7 +333,7 @@ class SettingsUpdate(BaseModel):
 
 
 @router.get("/settings")
-async def get_settings():
+async def get_settings(user: dict = Depends(require_admin)):
     s = load_settings()
     return {
         "llm_api_key": s.llm_api_key[:8] + "***" if len(s.llm_api_key) > 8 else "",
@@ -336,9 +344,11 @@ async def get_settings():
 
 
 @router.put("/settings")
-async def update_settings(data: SettingsUpdate):
+async def update_settings(data: SettingsUpdate, user: dict = Depends(require_admin)):
     s = load_settings()
-    s.llm_api_key = data.llm_api_key
+    # 不用空 key 覆盖已有 key(前端回显的是掩码***，提交空表示不改)
+    if data.llm_api_key and "***" not in data.llm_api_key:
+        s.llm_api_key = data.llm_api_key
     s.llm_base_url = data.llm_base_url
     s.llm_model = data.llm_model
     s.llm_api_format = data.llm_api_format

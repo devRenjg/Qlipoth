@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from searcher import grep_search, read_file_content, SearchResults
@@ -6,6 +6,7 @@ from llm import generate_search_strategy, generate_answer, stream_answer, resolv
 from config import load_settings
 from question_router import route_model
 from database import DB_PATH
+from auth import require_login
 from datetime import datetime, timezone, timedelta
 import aiosqlite
 import re
@@ -202,7 +203,7 @@ def _assemble_context(results: list, question: str) -> tuple[str, list[str], lis
 
 
 @router.post("/query", response_model=QueryResponse)
-async def query_knowledge_base(req: QueryRequest):
+async def query_knowledge_base(req: QueryRequest, user: dict = Depends(require_login)):
     t_start = time.perf_counter()
 
     settings = load_settings()
@@ -499,7 +500,7 @@ def _extract_relevant_sections(content: str, results: list, context_radius: int 
 
 
 @router.get("/search")
-async def simple_search(q: str):
+async def simple_search(q: str, user: dict = Depends(require_login)):
     results = grep_search([q])
     return {
         "results": [
@@ -510,7 +511,7 @@ async def simple_search(q: str):
 
 
 @router.post("/query/stream")
-async def query_knowledge_base_stream(req: QueryRequest, request: Request):
+async def query_knowledge_base_stream(req: QueryRequest, request: Request, user: dict = Depends(require_login)):
     settings = load_settings()
     if not settings.llm_api_key:
         raise HTTPException(400, "请先在设置中配置 LLM API Key")
@@ -618,13 +619,13 @@ class SaveHistoryRequest(BaseModel):
 
 
 @router.post("/chat/history")
-async def save_chat_history(req: SaveHistoryRequest):
-    """Save a Q&A pair to chat history."""
+async def save_chat_history(req: SaveHistoryRequest, user: dict = Depends(require_login)):
+    """Save a Q&A pair to chat history (绑定当前登录用户)。"""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT INTO chat_history (user_id, question, answer, source_urls, conversation_id, selected_tags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
-                req.user_id,
+                user["id"],
                 req.question,
                 req.answer,
                 json.dumps(req.source_urls, ensure_ascii=False),
@@ -638,8 +639,10 @@ async def save_chat_history(req: SaveHistoryRequest):
 
 
 @router.get("/chat/history")
-async def get_chat_history(user_id: int | None = None, limit: int = 50):
-    """Get chat history, optionally filtered by user."""
+async def get_chat_history(user_id: int | None = None, limit: int = 50, user: dict = Depends(require_login)):
+    """Get chat history. 非管理员只能看自己的；管理员可传 user_id 或看全部。"""
+    if user["role"] not in ("admin", "super"):
+        user_id = user["id"]   # 普通用户强制只看本人，忽略客户端传入
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         if user_id:
@@ -668,11 +671,10 @@ async def get_chat_history(user_id: int | None = None, limit: int = 50):
 
 
 @router.get("/chat/conversations")
-async def list_conversations(user_id: int | None = None, limit: int = 50):
-    """会话分组列表：有 conversation_id 的按会话聚合，历史 NULL 行作为单轮伪会话(legacy-{id})。
-
-    user_id 为 None 时返回全部（admin/super 视角，对齐 get_chat_history 角色过滤）。
-    """
+async def list_conversations(user_id: int | None = None, limit: int = 50, user: dict = Depends(require_login)):
+    """会话分组列表。非管理员只看本人；管理员可传 user_id 或看全部。"""
+    if user["role"] not in ("admin", "super"):
+        user_id = user["id"]
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         user_filter = "AND h.user_id = ?" if user_id else ""
@@ -736,7 +738,7 @@ async def list_conversations(user_id: int | None = None, limit: int = 50):
 
 
 @router.get("/chat/conversation/{conversation_id}")
-async def get_conversation(conversation_id: str):
+async def get_conversation(conversation_id: str, user: dict = Depends(require_login)):
     """单会话全部轮次，按 id ASC（同秒不乱序）。legacy-{id} 为历史单轮伪会话。"""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -772,8 +774,16 @@ async def get_conversation(conversation_id: str):
 
 
 @router.delete("/chat/history/{history_id}")
-async def delete_chat_history(history_id: int):
+async def delete_chat_history(history_id: int, user: dict = Depends(require_login)):
     async with aiosqlite.connect(DB_PATH) as db:
+        # 非管理员只能删自己的记录
+        if user["role"] not in ("admin", "super"):
+            db.row_factory = aiosqlite.Row
+            row = await (await db.execute("SELECT user_id FROM chat_history WHERE id = ?", (history_id,))).fetchone()
+            if not row:
+                raise HTTPException(404, "记录不存在")
+            if row["user_id"] != user["id"]:
+                raise HTTPException(403, "无权删除他人记录")
         await db.execute("DELETE FROM chat_history WHERE id = ?", (history_id,))
         await db.commit()
     return {"message": "deleted"}

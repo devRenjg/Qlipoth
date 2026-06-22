@@ -107,7 +107,7 @@
 
 ### Requirement: BM25 + RRF 旁路重排
 
-系统 SHALL 在 IDF 覆盖度文件排序之后，以零依赖的 char-bigram BM25（Okapi，k1=1.5/b=0.75）对候选文件重新打分，并用 RRF（k=60）将 BM25 排序与既有 grep/IDF 排序融合，提升召回。融合 SHALL 为旁路设计：当 BM25 不可用、异常或返回空时，系统 SHALL 回退到既有 `_select_files` 顺序，保证缺省零回归。被 BM25 召回但无 grep 命中行的文件，系统 SHALL 读取其开头若干预算字符以兑现召回增益。
+系统 SHALL 在 IDF 覆盖度文件排序之后，以零依赖的 char-bigram BM25（Okapi，k1=1.5/b=1.0）对候选文件重新打分，并用 RRF（k=60）将 BM25 排序与既有 grep/IDF 排序融合，提升召回。融合 SHALL 为旁路设计：当 BM25 不可用、异常或返回空时，系统 SHALL 回退到既有 `_select_files` 顺序，保证缺省零回归。被 BM25 召回但无 grep 命中行的文件，系统 SHALL 读取其开头若干预算字符以兑现召回增益。
 
 #### Scenario: BM25/RRF 融合提升召回
 

@@ -6,14 +6,14 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import aiosqlite
 from config import load_settings
 from parsers import parse_file, PARSERS, extract_owners
 from database import DB_PATH
-from auth import COOKIE_NAME
+from auth import COOKIE_NAME, require_login, require_admin
 from scraper import scrape_tencent_doc, scrape_tencent_doc_recursive, validate_tencent_doc_url
 from confluence import (
     scrape_confluence_recursive,
@@ -764,7 +764,7 @@ async def _save_import_tree(root_url: str, root_title: str, tree_entries: list[d
 
 
 @router.get("/upload/trees")
-async def list_import_trees():
+async def list_import_trees(user: dict = Depends(require_login)):
     """List all import tree records.
 
     附带从 tree_data 计算的成功/跳过/失败计数与展示标题兜底，
@@ -850,7 +850,7 @@ async def delete_import_tree(tree_id: int, request: Request):
 
 
 @router.get("/upload/failed")
-async def list_failed_imports():
+async def list_failed_imports(user: dict = Depends(require_login)):
     """List all failed import records for future retry."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -876,7 +876,7 @@ class FailedReasonUpdate(BaseModel):
 
 
 @router.patch("/upload/failed/{record_id}")
-async def update_failed_import_reason(record_id: int, req: FailedReasonUpdate):
+async def update_failed_import_reason(record_id: int, req: FailedReasonUpdate, user: dict = Depends(require_admin)):
     """Update the failure reason of a record after a retry fails again."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
