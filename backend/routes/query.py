@@ -93,15 +93,23 @@ MAX_HISTORY_CHARS = 6000
 HISTORY_WINDOW_TURNS = 3
 
 
-async def _load_recent_turns(conversation_id: str, limit: int = HISTORY_WINDOW_TURNS) -> list[dict]:
-    """按 conversation_id 取最近 limit 轮，返回由旧到新的 [{question, answer}]。"""
+async def _load_recent_turns(conversation_id: str, limit: int = HISTORY_WINDOW_TURNS, user_id: int | None = None) -> list[dict]:
+    """按 conversation_id 取最近 limit 轮，返回由旧到新的 [{question, answer}]。
+    user_id 非空时强制只取该用户的历史(防越权把他人会话注入上下文)。"""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            "SELECT question, answer FROM chat_history "
-            "WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
-            (conversation_id, limit),
-        )
+        if user_id is not None:
+            cursor = await db.execute(
+                "SELECT question, answer FROM chat_history "
+                "WHERE conversation_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
+                (conversation_id, user_id, limit),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT question, answer FROM chat_history "
+                "WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
+                (conversation_id, limit),
+            )
         rows = await cursor.fetchall()
     turns = [{"question": r["question"], "answer": r["answer"]} for r in rows]
     turns.reverse()  # 由旧到新
@@ -521,7 +529,8 @@ async def query_knowledge_base_stream(req: QueryRequest, request: Request, user:
     # 多轮上下文：仅当有 conversation_id 且能载入历史时才做指代消解（首轮/无会话零开销）
     recent_turns = []
     if req.conversation_id:
-        recent_turns = await _load_recent_turns(req.conversation_id)
+        # 绑定当前用户，防止他人会话历史被注入上下文(普通用户/管理员都只取自己的)
+        recent_turns = await _load_recent_turns(req.conversation_id, user_id=user["id"])
     history_block = _build_history_block(recent_turns)
 
     if history_block:
@@ -739,7 +748,9 @@ async def list_conversations(user_id: int | None = None, limit: int = 50, user: 
 
 @router.get("/chat/conversation/{conversation_id}")
 async def get_conversation(conversation_id: str, user: dict = Depends(require_login)):
-    """单会话全部轮次，按 id ASC（同秒不乱序）。legacy-{id} 为历史单轮伪会话。"""
+    """单会话全部轮次，按 id ASC（同秒不乱序）。legacy-{id} 为历史单轮伪会话。
+    非管理员仅能读本人会话(防按 conversation_id/legacy-id 越权读他人内容)。"""
+    own_only = user["role"] not in ("admin", "super")
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         if conversation_id.startswith("legacy-"):
@@ -747,17 +758,31 @@ async def get_conversation(conversation_id: str, user: dict = Depends(require_lo
                 row_id = int(conversation_id.removeprefix("legacy-"))
             except ValueError:
                 return []
-            cursor = await db.execute(
-                "SELECT h.*, u.username AS user_name FROM chat_history h "
-                "LEFT JOIN users u ON h.user_id = u.id WHERE h.id = ?",
-                (row_id,),
-            )
+            if own_only:
+                cursor = await db.execute(
+                    "SELECT h.*, u.username AS user_name FROM chat_history h "
+                    "LEFT JOIN users u ON h.user_id = u.id WHERE h.id = ? AND h.user_id = ?",
+                    (row_id, user["id"]),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT h.*, u.username AS user_name FROM chat_history h "
+                    "LEFT JOIN users u ON h.user_id = u.id WHERE h.id = ?",
+                    (row_id,),
+                )
         else:
-            cursor = await db.execute(
-                "SELECT h.*, u.username AS user_name FROM chat_history h "
-                "LEFT JOIN users u ON h.user_id = u.id WHERE h.conversation_id = ? ORDER BY h.id ASC",
-                (conversation_id,),
-            )
+            if own_only:
+                cursor = await db.execute(
+                    "SELECT h.*, u.username AS user_name FROM chat_history h "
+                    "LEFT JOIN users u ON h.user_id = u.id WHERE h.conversation_id = ? AND h.user_id = ? ORDER BY h.id ASC",
+                    (conversation_id, user["id"]),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT h.*, u.username AS user_name FROM chat_history h "
+                    "LEFT JOIN users u ON h.user_id = u.id WHERE h.conversation_id = ? ORDER BY h.id ASC",
+                    (conversation_id,),
+                )
         rows = await cursor.fetchall()
         return [
             {

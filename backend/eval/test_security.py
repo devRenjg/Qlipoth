@@ -69,3 +69,61 @@ class TestAuthDeps(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestHttpPermissionMatrix(unittest.TestCase):
+    """HTTP 级权限/越权回归(FastAPI TestClient)。造临时用户与会话，测完清理。"""
+
+    @classmethod
+    def setUpClass(cls):
+        import sqlite3, secrets
+        from fastapi.testclient import TestClient
+        from main import app
+        from database import DB_PATH
+        cls.DB_PATH = DB_PATH
+        cls.client = TestClient(app)
+        cls.tokA = "test_tokA_" + secrets.token_hex(6)
+        cls.tokB = "test_tokB_" + secrets.token_hex(6)
+        cls.conv = "test_conv_" + secrets.token_hex(6)
+        db = sqlite3.connect(DB_PATH)
+        cur = db.execute("INSERT INTO users (bili_uid,username,password_hash,password_salt,role,token) VALUES (?,?,?,?,?,?)",
+                         ("tuidA", "sec_userA_"+secrets.token_hex(3), "x", "y", "user", cls.tokA))
+        cls.uidA = cur.lastrowid
+        cur = db.execute("INSERT INTO users (bili_uid,username,password_hash,password_salt,role,token) VALUES (?,?,?,?,?,?)",
+                         ("tuidB", "sec_userB_"+secrets.token_hex(3), "x", "y", "user", cls.tokB))
+        cls.uidB = cur.lastrowid
+        # userA 拥有一条会话历史
+        db.execute("INSERT INTO chat_history (user_id,question,answer,conversation_id,created_at) VALUES (?,?,?,?,datetime('now'))",
+                   (cls.uidA, "A的问题", "A的答案", cls.conv))
+        db.commit(); db.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        import sqlite3
+        db = sqlite3.connect(cls.DB_PATH)
+        db.execute("DELETE FROM chat_history WHERE conversation_id = ?", (cls.conv,))
+        db.execute("DELETE FROM users WHERE id IN (?,?)", (cls.uidA, cls.uidB))
+        db.commit(); db.close()
+
+    def test_anonymous_denied(self):
+        for p in ["/api/documents", "/api/settings", "/api/battlemap",
+                  "/api/documents/img-proxy?url=https://wiki.example.com/x.png",
+                  "/api/documents/kb-image/foo.png"]:
+            self.assertEqual(self.client.get(p).status_code, 401, f"匿名未被拒: {p}")
+
+    def test_conversation_cross_user_blocked(self):
+        # userB 不能读取 userA 的会话内容
+        r = self.client.get(f"/api/chat/conversation/{self.conv}",
+                            cookies={"qlipoth_token": self.tokB})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), [], "userB 越权读到了 userA 的会话")
+        # userA 自己能读到
+        r2 = self.client.get(f"/api/chat/conversation/{self.conv}",
+                             cookies={"qlipoth_token": self.tokA})
+        self.assertTrue(len(r2.json()) >= 1, "userA 读不到自己的会话")
+
+    def test_imgproxy_requires_login_and_https(self):
+        # 登录后非 https / 非白名单 host 被拒
+        r = self.client.get("/api/documents/img-proxy?url=http://evil.com/x.png",
+                           cookies={"qlipoth_token": self.tokA})
+        self.assertEqual(r.status_code, 400)

@@ -35,15 +35,17 @@ def _ext_to_media(suffix: str) -> str:
 
 
 @router.get("/documents/img-proxy")
-async def proxy_info_image(url: str):
+async def proxy_info_image(url: str, user: dict = Depends(require_login)):
     """Fetch an wiki.example.com image server-side (with cookie) and return it.
 
-    Disk-cached; only whitelisted hosts are proxied (not an open proxy).
+    Disk-cached; only whitelisted hosts are proxied (not an open proxy). 需登录。
     """
     target = unquote(url)
-    host = urlparse(target).hostname
-    if host not in _INFO_IMG_HOSTS:
-        raise HTTPException(400, "仅支持代理 wiki.example.com 图片")
+    parsed = urlparse(target)
+    host = parsed.hostname
+    # 严格校验：必须 https + host 在白名单(防 SSRF/开放代理)
+    if parsed.scheme != "https" or host not in _INFO_IMG_HOSTS:
+        raise HTTPException(400, "仅支持代理 wiki.example.com 的 https 图片")
 
     # 1. 命中本地缓存 → 直接返回，不回源
     cache_path = _img_cache_path(target)
@@ -63,10 +65,14 @@ async def proxy_info_image(url: str):
         cookie = ""
 
     try:
-        async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=30) as client:
+        # 不自动跟随重定向(防 cookie 被带去非白名单 host)；如遇重定向视为不可用
+        async with httpx.AsyncClient(verify=False, follow_redirects=False, timeout=30) as client:
             resp = await client.get(target, headers={"Cookie": cookie} if cookie else {})
     except Exception as e:
         raise HTTPException(502, f"取图失败: {type(e).__name__}")
+
+    if resp.status_code in (301, 302, 303, 307, 308):
+        raise HTTPException(502, "图片不可用（被重定向，可能 info 登录态已失效）")
 
     ctype = resp.headers.get("content-type", "")
     if resp.status_code != 200 or not ctype.startswith(_IMG_CONTENT_TYPES):
@@ -94,8 +100,8 @@ _IMG_MEDIA = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 
 
 @router.get("/documents/kb-image/{name}")
-async def get_kb_image(name: str):
-    """服务企微文档落地的本地图片。文件名是内容 hash + 扩展名，防目录穿越。"""
+async def get_kb_image(name: str, user: dict = Depends(require_login)):
+    """服务企微文档落地的本地图片。文件名是内容 hash + 扩展名，防目录穿越。需登录。"""
     safe = Path(name).name  # 去掉任何路径成分
     fpath = _KB_IMAGES_DIR / safe
     if not fpath.exists() or not fpath.is_file():
