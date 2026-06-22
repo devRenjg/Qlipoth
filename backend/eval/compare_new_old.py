@@ -12,6 +12,7 @@ import searcher
 import llm
 from config import load_settings
 from routes.query import _select_files
+from eval.bm25_index import BM25Index, tokenize
 
 KB = BACKEND_DIR / "knowledge_base"
 OLD = BACKEND_DIR / "knowledge_base_old"
@@ -43,6 +44,17 @@ async def run_on(kb_dir, k):
             sel = await _retrieve(q, k)
         except Exception:
             sel = []
+        rc, mr = _row_metric(sel, rel)
+        rows.append({"type": q["type"], "recall": rc, "mrr": mr})
+    return rows
+
+def run_bm25(kb_dir, k):
+    """语义化检索:全库 char-bigram BM25,问题直接 topk。"""
+    idx = BM25Index(tokenize).build(str(kb_dir))
+    rows = []
+    for q in GOLDEN:
+        rel = [_norm(f) for f in q["relevant_files"]]
+        sel = [_norm(f) for f in idx.topk(q["question"], k)]
         rc, mr = _row_metric(sel, rel)
         rows.append({"type": q["type"], "recall": rc, "mrr": mr})
     return rows
@@ -96,6 +108,26 @@ async def main():
                "by_type_new": {t: v[0] for t, v in nbt.items()},
                "by_type_old": {t: v[0] for t, v in obt.items()}},
               open(Path(__file__).parent / "reports" / "compare_new_old.json", "w", encoding="utf-8"),
+              ensure_ascii=False, indent=1)
+
+    # —— 语义化检索(BM25)对比 ——
+    print("\n构建BM25索引并对比(语义化检索)...", flush=True)
+    nb = run_bm25(KB, k); ob = run_bm25(old_dir, k)
+    nbr, nbm = agg(nb); obr, obm = agg(ob)
+    print("\n=== 新旧库受控对比 (100题, Recall@10, BM25语义检索) ===", flush=True)
+    print(f"  新版(API)     : Recall={nbr:.3f}  MRR={nbm:.3f}", flush=True)
+    print(f"  旧版(Playwright): Recall={obr:.3f}  MRR={obm:.3f}", flush=True)
+    print(f"  提升          : Recall {nbr-obr:+.3f}  MRR {nbm-obm:+.3f}", flush=True)
+    print("\n--- BM25 分type Recall (新 vs 旧) ---", flush=True)
+    nbbt, obbt = agg_by_type(nb), agg_by_type(ob)
+    for t in nbbt:
+        nrc, n = nbbt[t]; orc = obbt.get(t, (0, 0))[0]
+        print(f"  {t}(n={n}): 新{nrc:.2f} vs 旧{orc:.2f}  ({nrc-orc:+.2f})", flush=True)
+    json.dump({"grep": {"new": {"recall": nr, "mrr": nm}, "old": {"recall": orr, "mrr": om}},
+               "bm25": {"new": {"recall": nbr, "mrr": nbm}, "old": {"recall": obr, "mrr": obm},
+                        "by_type_new": {t: v[0] for t, v in nbbt.items()},
+                        "by_type_old": {t: v[0] for t, v in obbt.items()}}},
+              open(Path(__file__).parent / "reports" / "compare_new_old_full.json", "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
 
 if __name__ == "__main__":
