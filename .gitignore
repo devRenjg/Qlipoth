@@ -45,3 +45,6 @@ openspec/changes/archive/
 # 内部业务场景 spec(保障清单/作战地图)不公开
 openspec/specs/battle-checklist/
 openspec/specs/battle-map/
+
+# 完整设计文档(内部，本地维护，不推公开仓库；README 仅留精简公开版)
+DesignDoc.md
