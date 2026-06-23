@@ -1,4 +1,4 @@
-"""Task4: 模拟 user_a/Duck/剑剑 三位用户的多轮真实提问 + 追问，端到端打知识库。
+"""Task4: 模拟 user_a/user_b/user_c 三位用户的多轮真实提问 + 追问，端到端打知识库。
 
 不走离线检索，而是 HTTP 打生产 /api/query/stream（和浏览器完全一致）：
 每轮生成 conversation_id → 流式拿答案 → 存 chat_history（让下一轮触发指代消解追问）。
@@ -32,11 +32,11 @@ from llm import chat_completion  # noqa: E402
 REPORTS_DIR = Path(__file__).parent / "reports"
 _BJ = timezone(timedelta(hours=8))
 
-# 三位用户 → DB users（剑剑=admin, Duck=super, user_a=user）
+# 三位示例用户 → DB users（user_c=admin, user_b=super, user_a=user）
 PERSONAS = {
     "user_a": {"user_id": 3, "role": "user"},
-    "Duck": {"user_id": 2, "role": "super"},
-    "剑剑": {"user_id": 1, "role": "admin"},
+    "user_b": {"user_id": 2, "role": "super"},
+    "user_c": {"user_id": 1, "role": "admin"},
 }
 
 JUDGE_SYSTEM = """你是知识库问答质量裁判。给定【用户问题】【系统答案】，按下面 4 个维度打分（0-5 整数），并判定是否"答非所问"。
@@ -63,7 +63,7 @@ def _parse_json(text: str) -> dict | None:
         return None
 
 
-# 多轮对话脚本：每个 persona 一组，贴合知识库（CNY/春晚 直播保障）主题。
+# 多轮对话脚本：每个示例用户一组（合成 demo 主题，与真实业务无关）。
 # 每组首问 + 若干追问（追问故意用指代："那""这个""他们"以压测 coref）。
 CONVERSATIONS = {
     "user_a": [
@@ -77,24 +77,24 @@ CONVERSATIONS = {
             "那发放上有没有做降级或限流？",
         ],
     ],
-    "Duck": [
+    "user_b": [
         [
             "示例消息审核链路是怎么设计的？",
             "它的安全防护具体有哪些手段？",
-            "那如果机审被绕过有没有兜底？",
+            "那如果审核被绕过有没有兜底？",
         ],
         [
             "示例压测方案的目标和结论是什么？",
             "压测中暴露了哪些瓶颈？",
         ],
     ],
-    "剑剑": [
+    "user_c": [
         [
-            "26 春晚需求实际上线后的版本覆盖率多少，对比去年如何？",
+            "示例需求上线后的覆盖率多少，对比上次如何？",
             "覆盖率不达标的话有什么补救措施？",
         ],
         [
-            "OTT 多屏大型活动预演覆盖了哪些场景？",
+            "示例预演覆盖了哪些场景？",
             "负责人是谁？",
             "他们预演里发现的主要问题是什么？",
         ],

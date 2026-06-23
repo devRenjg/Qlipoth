@@ -48,3 +48,13 @@ openspec/specs/battle-map/
 
 # 完整设计文档(内部，本地维护，不推公开仓库；README 仅留精简公开版)
 DesignDoc.md
+temp_tasks/
+
+# 一次性历史评测脚本(含早期真实业务样本，本地保留不公开)
+backend/eval_combined.py
+backend/eval_p0.py
+backend/eval_table.py
+backend/eval_retrieval_ab.py
+backend/eval_full103.py
+backend/eval_new_vs_old.py
+backend/assign_owners.py
