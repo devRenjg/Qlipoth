@@ -14,6 +14,13 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
 
+def setUpModule():
+    """确保 DB 表存在(全新环境/fresh clone 也能跑通，幂等)。"""
+    import asyncio
+    from database import init_db
+    asyncio.run(init_db())
+
+
 class TestPathTraversal(unittest.TestCase):
     """知识库文件读取必须限定在 KB 目录内。"""
 
@@ -35,12 +42,21 @@ class TestPathTraversal(unittest.TestCase):
         self.assertIsNone(self.searcher._safe_kb_path("foo.py"))
 
     def test_legit_md_allowed(self):
-        # 库内真实 .md 应能读到
+        # 库内真实 .md 应能读到；全新环境(无kb目录)自建临时demo文件
         import os
+        self.kb.mkdir(parents=True, exist_ok=True)
         mds = [f for f in os.listdir(self.kb) if f.endswith(".md")]
-        if mds:
+        created = None
+        if not mds:
+            created = self.kb / "_test_demo.md"
+            created.write_text("# demo\n示例内容\n", encoding="utf-8")
+            mds = ["_test_demo.md"]
+        try:
             self.assertIsNotNone(self.searcher._safe_kb_path(mds[0]))
             self.assertTrue(len(self.searcher.read_file_content(mds[0])) > 0)
+        finally:
+            if created and created.exists():
+                created.unlink()
 
 
 class TestAuthDeps(unittest.TestCase):

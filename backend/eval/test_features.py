@@ -17,6 +17,13 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
 
+def setUpModule():
+    """确保 DB 表存在(全新环境/fresh clone 也能跑通，幂等)。"""
+    import asyncio
+    from database import init_db
+    asyncio.run(init_db())
+
+
 class TestQuestionRouter(unittest.TestCase):
     """问题分类路由：分类规则 + 强/快模型选择 + 零回归。"""
 
@@ -108,8 +115,12 @@ class TestBM25(unittest.TestCase):
     def test_fuse_select_returns_within_max(self):
         baseline = [f"doc{i}.md" for i in range(20)]
         out = self.bm25.fuse_select(baseline, "测试问题", max_files=10)
-        self.assertLessEqual(len(out), 10)
         self.assertIsInstance(out, list)
+        # 有索引时裁剪到 max_files；无索引(如全新环境)按零回归原样返回 baseline
+        if self.bm25._get_index() is not None:
+            self.assertLessEqual(len(out), 10)
+        else:
+            self.assertEqual(out, baseline)
 
     def test_fuse_select_fallback_on_empty_index(self):
         """索引不可用时原样返回 baseline（零回归）。"""
