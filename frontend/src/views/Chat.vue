@@ -192,9 +192,9 @@ const topicTags = computed(() => tags.value.filter(t => !isActivityTag(t.name)))
 const selectedTagIds = ref([])
 
 const presetQuestions = [
-  '示例活动值班多少人？',
+  '示例活动的值班安排是怎样的，多少人？',
   '示例活动大概有多少需求，主要有哪些内容？',
-  '示例需求上线后的版本覆盖率多少，对比去年如何？',
+  '示例需求上线后的版本覆盖率多少，对比上次如何？',
 ]
 
 onMounted(() => { loadConversations(); loadTags() })
