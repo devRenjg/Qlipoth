@@ -67,7 +67,7 @@
         <el-button size="small" text type="info" @click="handleLogout">退出</el-button>
       </div>
     </el-header>
-    <el-main class="app-main" :class="{ 'full-width': isChatPage }">
+    <el-main class="app-main" :class="{ 'full-width': isChatPage, 'wide-width': isWidePage }">
       <router-view />
     </el-main>
   </el-container>
@@ -82,6 +82,7 @@ import { ElMessage } from 'element-plus'
 const route = useRoute()
 const activeRoute = computed(() => route.path)
 const isChatPage = computed(() => route.path === '/chat')
+const isWidePage = computed(() => route.path === '/live-calendar')
 const user = ref(null)
 const ready = ref(false)
 const username = ref('')
@@ -221,6 +222,9 @@ body {
 .app-main.full-width {
   max-width: none;
   padding: 0;
+}
+.app-main.wide-width {
+  max-width: none;
 }
 .login-page {
   display: flex;
