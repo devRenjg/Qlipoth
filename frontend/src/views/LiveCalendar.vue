@@ -23,9 +23,13 @@
            :class="{ 'is-today': cell.isToday, 'other-month': !cell.inRange, 'has-sess': cell.sessions.length }">
         <div class="day-num">{{ cell.day }}</div>
         <div class="sess-list">
-          <div v-for="s in cell.sessions" :key="s.id" class="sess" :class="s.pcu!=null ? 'past':'future'"
+          <div v-for="s in cell.sessions" :key="s.id" class="sess"
+               :class="[s.pcu!=null ? 'past':'future', { 'vip': isVip(s) }]"
                @click="openDetail(s)">
-            <div class="sess-title"><span class="sess-time">{{ hhmm(s.session_time) }}</span>{{ s.title }}</div>
+            <div class="sess-title">
+              <span v-if="isVip(s)" class="vip-star" title="重点关注官号/高优">★</span>
+              <span class="sess-time">{{ hhmm(s.session_time) }}</span>{{ s.title }}
+            </div>
             <div class="sess-metric">
               <span v-if="s.anchor_name" class="anchor">{{ s.anchor_name }}</span>
               <span v-if="s.pcu!=null" class="pcu">PCU {{ fmt(s.pcu) }}</span>
@@ -39,7 +43,8 @@
     <!-- 详情抽屉 -->
     <el-drawer v-model="drawer" :title="detail?.title || '场次详情'" size="380px">
       <div v-if="detail" class="detail">
-        <div class="d-row"><span class="d-lbl">时间</span><span>{{ detail.session_time }}</span></div>
+        <div v-if="isVip(detail)" class="vip-banner">★ 重点关注 · 官号/高优直播</div>
+        <div class="d-row"><span class="d-lbl">{{ detail.pcu!=null ? 'PCU峰值时间' : '开播时间' }}</span><span>{{ detail.session_time }}</span></div>
         <div class="d-row"><span class="d-lbl">主播</span><span>{{ detail.anchor_name || '—' }}</span></div>
         <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">PCU</span><span>{{ fmt(detail.pcu) }}</span></div>
         <div class="d-row" v-if="detail.reservation!=null"><span class="d-lbl">预约数</span><span>{{ fmt(detail.reservation) }}</span></div>
@@ -67,6 +72,10 @@ const detail = ref(null)
 
 const fmt = (n) => n == null ? '' : (n >= 10000 ? (n / 10000).toFixed(1) + 'w' : String(n))
 const hhmm = (t) => (t || '').slice(11, 16)   // 'YYYY-MM-DD HH:MM:SS' → 'HH:MM'
+
+// 重点关注官号/高优Up白名单(主播名精确匹配)→ 特殊标识
+const VIP_ANCHORS = ['哔哩哔哩王者荣耀赛事', '哔哩哔哩弹幕网', '哔哩哔哩直播', '影视飓风']
+const isVip = (s) => VIP_ANCHORS.includes((s.anchor_name || '').trim())
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 const isSameDay = (a, b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate()
 
@@ -169,6 +178,9 @@ onMounted(load)
 
 .sess-metric .pcu { color: #b3701a; font-weight: 600; }
 .sess-metric .rsv { color: #2f9e5e; font-weight: 600; }
+.sess.vip { border-left-color:#e0a020 !important; background:linear-gradient(180deg,#fffbf0,#fff); box-shadow:0 0 0 1px #f0d488 inset; }
+.vip-star { color:#e0a020; font-weight:700; margin-right:2px; }
+.vip-banner { background:linear-gradient(90deg,#fff4d6,#fffbf0); color:#9a6b00; border:1px solid #f0d488; border-radius:6px; padding:8px 12px; font-weight:600; margin-bottom:12px; font-size:13px; }
 .detail .d-row { display: flex; padding: 8px 0; border-bottom: 1px solid #f0f2f5; font-size: 14px; }
 .detail .d-lbl { width: 80px; color: #909399; }
 </style>
