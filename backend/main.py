@@ -1,4 +1,11 @@
 from contextlib import asynccontextmanager
+# 启动时加载本地 .env(若存在)：真实配置(URL前缀/CORS/cookie等)走本地.env，不进公开仓库
+try:
+    from dotenv import load_dotenv
+    from pathlib import Path as _Path
+    load_dotenv(_Path(__file__).parent / ".env")
+except Exception:
+    pass
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db

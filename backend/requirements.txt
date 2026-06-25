@@ -11,3 +11,4 @@ pydantic>=2.9.2
 pydantic-settings>=2.5.2
 playwright>=1.40.0
 browser_cookie3>=0.20.1
+python-dotenv

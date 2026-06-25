@@ -58,3 +58,4 @@ backend/eval_retrieval_ab.py
 backend/eval_full103.py
 backend/eval_new_vs_old.py
 backend/assign_owners.py
+backend/.env
