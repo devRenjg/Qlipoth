@@ -25,8 +25,9 @@
         <div class="sess-list">
           <div v-for="s in cell.sessions" :key="s.id" class="sess" :class="s.pcu!=null ? 'past':'future'"
                @click="openDetail(s)">
-            <div class="sess-title">{{ s.title }}</div>
+            <div class="sess-title"><span class="sess-time">{{ hhmm(s.session_time) }}</span>{{ s.title }}</div>
             <div class="sess-metric">
+              <span v-if="s.anchor_name" class="anchor">{{ s.anchor_name }}</span>
               <span v-if="s.pcu!=null" class="pcu">PCU {{ fmt(s.pcu) }}</span>
               <span v-if="s.reservation!=null" class="rsv">预约 {{ fmt(s.reservation) }}</span>
             </div>
@@ -65,6 +66,7 @@ const drawer = ref(false)
 const detail = ref(null)
 
 const fmt = (n) => n == null ? '' : (n >= 10000 ? (n / 10000).toFixed(1) + 'w' : String(n))
+const hhmm = (t) => (t || '').slice(11, 16)   // 'YYYY-MM-DD HH:MM:SS' → 'HH:MM'
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 const isSameDay = (a, b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate()
 
@@ -159,7 +161,10 @@ onMounted(load)
 .sess.past { border-left-color: #e8a33d; }
 .sess.future { border-left-color: #2f9e5e; }
 .sess-title { color: #2c3a52; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sess-metric { display: flex; gap: 6px; margin-top: 1px; }
+.sess-metric { display: flex; gap: 6px; margin-top: 1px; flex-wrap: wrap; }
+.sess-time { color:#2f6bd6; font-weight:600; margin-right:4px; }
+.sess-metric .anchor { color:#7a6ad0; }
+
 .sess-metric .pcu { color: #b3701a; font-weight: 600; }
 .sess-metric .rsv { color: #2f9e5e; font-weight: 600; }
 .detail .d-row { display: flex; padding: 8px 0; border-bottom: 1px solid #f0f2f5; font-size: 14px; }
