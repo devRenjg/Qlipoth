@@ -152,28 +152,29 @@ onMounted(load)
 </script>
 
 <style scoped>
-.lc { max-width: 100%; margin: 0 auto; padding: 8px 4px 40px; }
+.lc { max-width: 100%; margin: 0 auto; padding: 8px 8px 40px; box-sizing: border-box; overflow-x: hidden; }
 .lc-head h2 { margin: 0 0 4px; font-size: 22px; color: #1a2b4a; }
 .lc-head .sub { color: #6b7a90; font-size: 13px; margin: 0 0 14px; }
 .lc-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
 .nav { display: inline-flex; align-items: center; gap: 8px; }
 .cur-label { font-weight: 600; color: #2f4368; min-width: 120px; text-align: center; }
-.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; width: 100%; box-sizing: border-box; }
 .weekday { text-align: center; font-size: 14px; color: #8a96a8; padding: 6px 0; font-weight: 600; }
-.day-cell { min-height: 150px; border: 1px solid #e3e8f0; border-radius: 8px; padding: 6px 8px; background: #fff; display: flex; flex-direction: column; }
+.day-cell { min-height: 150px; min-width: 0; box-sizing: border-box; overflow: hidden; border: 1px solid #e3e8f0; border-radius: 8px; padding: 6px 8px; background: #fff; display: flex; flex-direction: column; }
 .cal-grid.week .day-cell { min-height: 460px; }
 .day-cell.other-month { background: #f7f9fc; opacity: .6; }
 .day-cell.is-today { border-color: #2f6bd6; box-shadow: 0 0 0 1px #2f6bd6 inset; }
 .day-cell.has-sess { background: linear-gradient(180deg,#f5f9ff,#fff); }
 .day-num { font-size: 14px; color: #909399; margin-bottom: 4px; font-weight: 600; }
 .day-cell.is-today .day-num { color: #2f6bd6; font-weight: 700; }
-.sess-list { display: flex; flex-direction: column; gap: 4px; overflow: auto; }
-.sess { cursor: pointer; border-radius: 6px; padding: 5px 7px; font-size: 13px; border-left: 4px solid #c0c4cc; background: #f4f6fa; }
+.sess-list { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; overflow-x: hidden; min-width: 0; }
+.sess { cursor: pointer; border-radius: 6px; padding: 5px 7px; font-size: 13px; border-left: 4px solid #c0c4cc; background: #f4f6fa; min-width: 0; overflow: hidden; }
 .sess:hover { background: #e9f0fb; }
 .sess.past { border-left-color: #e8a33d; }
 .sess.future { border-left-color: #2f9e5e; }
 .sess-title { color: #2c3a52; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
-.sess-metric { display: flex; gap: 8px; margin-top: 3px; flex-wrap: wrap; font-size: 12px; }
+.sess-metric { display: flex; gap: 8px; margin-top: 3px; flex-wrap: wrap; font-size: 12px; min-width: 0; }
+.sess-metric > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .sess-time { color:#2f6bd6; font-weight:600; margin-right:4px; }
 .sess-metric .anchor { color:#7a6ad0; }
 
