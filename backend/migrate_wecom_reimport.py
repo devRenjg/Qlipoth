@@ -15,6 +15,12 @@ import os
 import re
 import json
 import shutil
+# 控制台输出兼容:文档标题可能含 emoji，Windows gbk 控制台 print 会崩；强制 UTF-8 且遇不可编码字符替换
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.dirname(__file__))
