@@ -152,7 +152,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.lc { max-width: 96vw; margin: 0 auto; padding: 16px 24px 40px; }
+.lc { max-width: 100%; margin: 0 auto; padding: 8px 4px 40px; }
 .lc-head h2 { margin: 0 0 4px; font-size: 22px; color: #1a2b4a; }
 .lc-head .sub { color: #6b7a90; font-size: 13px; margin: 0 0 14px; }
 .lc-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
