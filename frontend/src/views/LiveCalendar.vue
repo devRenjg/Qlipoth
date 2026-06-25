@@ -102,8 +102,10 @@ const cells = computed(() => {
   const d = new Date(start)
   while (d <= end) {
     const key = ymd(d)
+    // 排序：按热度降序(预约量优先，其次PCU)，同热度按时间
+    const metric = (s) => (s.reservation != null ? s.reservation : (s.pcu != null ? s.pcu : -1))
     const daySess = sessions.value.filter(s => (s.session_time || '').slice(0,10) === key)
-                                  .sort((a,b)=> (a.session_time||'').localeCompare(b.session_time||''))
+                                  .sort((a,b)=> metric(b) - metric(a) || (a.session_time||'').localeCompare(b.session_time||''))
     out.push({
       day: d.getDate(),
       date: key,
