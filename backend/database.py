@@ -180,6 +180,26 @@ async def init_db():
                 UNIQUE(dimension, item_hash, username)
             )
         """)
+        # 直播日历：重要直播场次(过去PCU实际值 / 未来预约数，数据由外部取数流程写入)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS live_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_time TIMESTAMP NOT NULL,
+                title TEXT NOT NULL,
+                anchor_name TEXT DEFAULT '',
+                pcu INTEGER,
+                reservation INTEGER,
+                room_id TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT (datetime('now', '+8 hours')),
+                updated_at TIMESTAMP DEFAULT (datetime('now', '+8 hours'))
+            )
+        """)
+        try:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_live_sessions_time ON live_sessions(session_time)"
+            )
+        except Exception:
+            pass
         try:
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_activity_user ON user_activity(user_id, id)"
