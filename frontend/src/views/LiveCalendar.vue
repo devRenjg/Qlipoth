@@ -75,7 +75,7 @@ const fmt = (n) => n == null ? '' : (n >= 10000 ? (n / 10000).toFixed(1) + 'w' :
 const hhmm = (t) => (t || '').slice(11, 16)   // 'YYYY-MM-DD HH:MM:SS' → 'HH:MM'
 
 // 重点关注官号/高优Up白名单(主播名精确匹配)→ 特殊标识
-const VIP_ANCHORS = ['哔哩哔哩王者荣耀赛事', '哔哩哔哩弹幕网', '哔哩哔哩直播', '影视飓风']
+const VIP_ANCHORS = ['哔哩哔哩弹幕网', '哔哩哔哩直播', '影视飓风']
 const isVip = (s) => VIP_ANCHORS.includes((s.anchor_name || '').trim())
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 const isSameDay = (a, b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate()
