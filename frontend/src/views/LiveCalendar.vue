@@ -178,9 +178,12 @@ onMounted(load)
 
 .sess-metric .pcu { color: #b3701a; font-weight: 600; }
 .sess-metric .rsv { color: #2f9e5e; font-weight: 600; }
-.sess.vip { border-left-color:#e0a020 !important; background:linear-gradient(180deg,#fffbf0,#fff); box-shadow:0 0 0 1px #f0d488 inset; }
-.vip-star { color:#e0a020; font-weight:700; margin-right:2px; }
-.vip-banner { background:linear-gradient(90deg,#fff4d6,#fffbf0); color:#9a6b00; border:1px solid #f0d488; border-radius:6px; padding:8px 12px; font-weight:600; margin-bottom:12px; font-size:13px; }
+.sess.vip { border-left:4px solid #e8520f !important; background:linear-gradient(135deg,#fff0d0,#ffe1b0) !important; box-shadow:0 0 0 2px #f0a020 inset, 0 2px 8px rgba(232,82,15,.25); }
+.sess.vip .sess-title { font-size:13.5px; font-weight:700; color:#b3401a; }
+.sess.vip .anchor { color:#c0392b !important; font-weight:700; }
+.sess.vip .pcu, .sess.vip .rsv { font-weight:700; }
+.vip-star { color:#e8520f; font-weight:900; font-size:15px; margin-right:3px; text-shadow:0 0 3px rgba(232,82,15,.4); }
+.vip-banner { background:linear-gradient(90deg,#ff7a18,#ffb020); color:#fff; border:none; border-radius:8px; padding:11px 14px; font-weight:800; margin-bottom:14px; font-size:15px; letter-spacing:1px; box-shadow:0 2px 10px rgba(232,82,15,.35); }
 .detail .d-row { display: flex; padding: 8px 0; border-bottom: 1px solid #f0f2f5; font-size: 14px; }
 .detail .d-lbl { width: 80px; color: #909399; }
 </style>
