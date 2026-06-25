@@ -28,10 +28,11 @@
                @click="openDetail(s)">
             <div class="sess-title">
               <span v-if="isVip(s)" class="vip-star" title="重点关注官号/高优">★</span>
-              <span class="sess-time">{{ hhmm(s.session_time) }}</span>{{ s.title }}
+              <span v-if="s.pcu==null" class="sess-time">{{ hhmm(s.session_time) }}</span>{{ s.title }}
             </div>
             <div class="sess-metric">
               <span v-if="s.anchor_name" class="anchor">{{ s.anchor_name }}</span>
+              <span v-if="s.pcu!=null" class="peak-time">峰值 {{ hhmm(s.session_time) }}</span>
               <span v-if="s.pcu!=null" class="pcu">PCU {{ fmt(s.pcu) }}</span>
               <span v-if="s.reservation!=null" class="rsv">预约 {{ fmt(s.reservation) }}</span>
             </div>
@@ -176,6 +177,7 @@ onMounted(load)
 .sess-time { color:#2f6bd6; font-weight:600; margin-right:4px; }
 .sess-metric .anchor { color:#7a6ad0; }
 
+.sess-metric .peak-time { color:#2f6bd6; font-weight:600; }
 .sess-metric .pcu { color: #b3701a; font-weight: 600; }
 .sess-metric .rsv { color: #2f9e5e; font-weight: 600; }
 .sess.vip { border-left:4px solid #e8520f !important; background:linear-gradient(135deg,#fff0d0,#ffe1b0) !important; box-shadow:0 0 0 2px #f0a020 inset, 0 2px 8px rgba(232,82,15,.25); }
