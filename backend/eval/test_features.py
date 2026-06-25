@@ -113,14 +113,27 @@ class TestBM25(unittest.TestCase):
         self.assertIn("覆盖", toks)
 
     def test_fuse_select_returns_within_max(self):
-        baseline = [f"doc{i}.md" for i in range(20)]
-        out = self.bm25.fuse_select(baseline, "测试问题", max_files=10)
-        self.assertIsInstance(out, list)
-        # 有索引时裁剪到 max_files；无索引(如全新环境)按零回归原样返回 baseline
-        if self.bm25._get_index() is not None:
-            self.assertLessEqual(len(out), 10)
-        else:
-            self.assertEqual(out, baseline)
+        """有非空索引且 query 有命中时，输出裁剪到 max_files。
+        用显式构造的临时索引，不依赖工作目录状态(保证 fresh clone/任意执行顺序稳定)。"""
+        import bm25, tempfile, os, shutil
+        tmp = tempfile.mkdtemp(prefix="bm25test_")
+        try:
+            # 造 20 篇含查询词的 .md，确保 query 必有命中
+            for i in range(20):
+                with open(os.path.join(tmp, f"doc{i}.md"), "w", encoding="utf-8") as fh:
+                    fh.write(f"版本覆盖率 测试文档 {i}\n")
+            idx = bm25._BM25().build(tmp)
+            orig = bm25._get_index
+            bm25._get_index = lambda: idx
+            try:
+                baseline = [f"doc{i}.md" for i in range(20)]
+                out = bm25.fuse_select(baseline, "版本覆盖率", max_files=10)
+                self.assertIsInstance(out, list)
+                self.assertLessEqual(len(out), 10)   # 有命中→裁剪
+            finally:
+                bm25._get_index = orig
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def test_fuse_select_fallback_on_empty_index(self):
         """索引不可用时原样返回 baseline（零回归）。"""

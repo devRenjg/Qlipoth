@@ -42,21 +42,21 @@ class TestPathTraversal(unittest.TestCase):
         self.assertIsNone(self.searcher._safe_kb_path("foo.py"))
 
     def test_legit_md_allowed(self):
-        # 库内真实 .md 应能读到；全新环境(无kb目录)自建临时demo文件
-        import os
-        self.kb.mkdir(parents=True, exist_ok=True)
-        mds = [f for f in os.listdir(self.kb) if f.endswith(".md")]
-        created = None
-        if not mds:
-            created = self.kb / "_test_demo.md"
-            created.write_text("# demo\n示例内容\n", encoding="utf-8")
-            mds = ["_test_demo.md"]
+        """库内真实 .md 应能读到。用临时KB目录+monkeypatch，绝不污染真实 knowledge_base。"""
+        import tempfile, shutil, os
+        tmp = tempfile.mkdtemp(prefix="kbtest_")
+        orig = self.searcher._get_kb_dir
+        self.searcher._get_kb_dir = lambda: tmp
         try:
-            self.assertIsNotNone(self.searcher._safe_kb_path(mds[0]))
-            self.assertTrue(len(self.searcher.read_file_content(mds[0])) > 0)
+            with open(os.path.join(tmp, "demo.md"), "w", encoding="utf-8") as fh:
+                fh.write("# demo\n示例内容\n")
+            self.assertIsNotNone(self.searcher._safe_kb_path("demo.md"))
+            self.assertTrue(len(self.searcher.read_file_content("demo.md")) > 0)
+            # 越界仍被拦截(在临时KB下复验)
+            self.assertIsNone(self.searcher._safe_kb_path("../config.py"))
         finally:
-            if created and created.exists():
-                created.unlink()
+            self.searcher._get_kb_dir = orig
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 class TestAuthDeps(unittest.TestCase):
