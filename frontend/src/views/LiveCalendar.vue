@@ -41,8 +41,8 @@
       <div v-if="detail" class="detail">
         <div class="d-row"><span class="d-lbl">时间</span><span>{{ detail.session_time }}</span></div>
         <div class="d-row"><span class="d-lbl">主播</span><span>{{ detail.anchor_name || '—' }}</span></div>
-        <div class="d-row"><span class="d-lbl">PCU</span><span>{{ detail.pcu!=null ? fmt(detail.pcu) : '—' }}</span></div>
-        <div class="d-row"><span class="d-lbl">预约数</span><span>{{ detail.reservation!=null ? fmt(detail.reservation) : '—' }}</span></div>
+        <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">PCU</span><span>{{ fmt(detail.pcu) }}</span></div>
+        <div class="d-row" v-if="detail.reservation!=null"><span class="d-lbl">预约数</span><span>{{ fmt(detail.reservation) }}</span></div>
         <div class="d-row"><span class="d-lbl">直播间ID</span><span>{{ detail.room_id || '—' }}</span></div>
         <el-button type="primary" :disabled="!detail.room_url" @click="enterRoom" style="margin-top:16px;width:100%">
           进直播间
