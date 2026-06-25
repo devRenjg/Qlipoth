@@ -92,6 +92,11 @@ py -3.12 -m unittest eval.test_features eval.test_security
 - 不可信文档渲染经 DOMPurify 净化，防 XSS
 - 用户数据隔离：聊天历史按登录用户隔离，覆盖角色与用户间越权
 
+### 依赖与部署说明
+
+- **生产依赖审计为 0**（`npm audit --omit=dev`）。完整审计中 `vite`/`esbuild` 存在开发依赖告警（GHSA-67mh-4wv8-2f99），仅影响本地开发服务器、不进入生产构建产物；修复需升级到 Vite 8（破坏性变更），后续版本计划升级。**开发服务器（`npm run dev`）不应暴露到公网。**
+- 生产 HTTPS 部署：认证 Cookie 默认 `HttpOnly + SameSite=Lax`，生产环境建议通过环境变量启用 `Secure`（见 `QLIPOTH_COOKIE_SECURE`）。
+
 ## License
 
 MIT

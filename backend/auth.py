@@ -13,6 +13,9 @@ router = APIRouter(tags=["user"])
 _BJ_TZ = timezone(timedelta(hours=8))
 COOKIE_NAME = "qlipoth_token"
 COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+# 生产 HTTPS 部署设 QLIPOTH_COOKIE_SECURE=1 启用 Secure；本地开发默认关(否则 http 无法调试登录)
+import os as _os
+COOKIE_SECURE = _os.environ.get("QLIPOTH_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
 
 ROLES = {"admin": 0, "super": 1, "user": 2}
 
@@ -134,7 +137,7 @@ async def register_user(req: RegisterRequest, response: Response):
         cursor = await db.execute("SELECT id, role FROM users WHERE token = ?", (token,))
         row = await cursor.fetchone()
 
-    response.set_cookie(COOKIE_NAME, token, max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax")
+    response.set_cookie(COOKIE_NAME, token, max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax", secure=COOKIE_SECURE)
     return {"user": {"id": row[0], "username": username, "role": row[1]}}
 
 
@@ -157,7 +160,7 @@ async def login_user(req: LoginRequest, response: Response):
         await db.execute("UPDATE users SET token = ?, last_seen = ? WHERE id = ?", (token, _now_bj(), row["id"]))
         await db.commit()
 
-    response.set_cookie(COOKIE_NAME, token, max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax")
+    response.set_cookie(COOKIE_NAME, token, max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax", secure=COOKIE_SECURE)
     return {"user": {"id": row["id"], "username": row["username"], "role": row["role"]}}
 
 
