@@ -75,7 +75,7 @@ const fmt = (n) => n == null ? '' : (n >= 10000 ? (n / 10000).toFixed(1) + 'w' :
 const hhmm = (t) => (t || '').slice(11, 16)   // 'YYYY-MM-DD HH:MM:SS' → 'HH:MM'
 
 // 重点关注官号/高优Up白名单(主播名精确匹配)→ 特殊标识
-const VIP_ANCHORS = ['哔哩哔哩弹幕网', '哔哩哔哩直播', '影视飓风']
+const VIP_ANCHORS = ['哔哩哔哩弹幕网', '哔哩哔哩直播', '影视飓风', '哔哩哔哩英雄联盟赛事', '哔哩哔哩晚会', '央视新闻']
 const isVip = (s) => VIP_ANCHORS.includes((s.anchor_name || '').trim())
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 const isSameDay = (a, b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate()
@@ -112,8 +112,8 @@ const cells = computed(() => {
   const d = new Date(start)
   while (d <= end) {
     const key = ymd(d)
-    // 排序：按热度降序(预约量优先，其次PCU)，同热度按时间
-    const metric = (s) => (s.reservation != null ? s.reservation : (s.pcu != null ? s.pcu : -1))
+    // 排序：有PCU的(过去/已开播)按PCU降序；纯预约的(未来)按预约量降序
+    const metric = (s) => (s.pcu != null ? s.pcu : (s.reservation != null ? s.reservation : -1))
     const daySess = sessions.value.filter(s => (s.session_time || '').slice(0,10) === key)
                                   .sort((a,b)=> metric(b) - metric(a) || (a.session_time||'').localeCompare(b.session_time||''))
     out.push({
