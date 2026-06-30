@@ -19,29 +19,55 @@
 
     <div v-loading="loading" class="cal-grid" :class="viewMode">
       <div class="weekday" v-for="w in weekNames" :key="w">{{ w }}</div>
-      <div v-for="(cell, i) in cells" :key="i" class="day-cell"
-           :class="{ 'is-today': cell.isToday, 'other-month': !cell.inRange, 'has-sess': cell.sessions.length }">
-        <div class="day-num">{{ cell.day }}</div>
-        <div class="sess-list">
-          <div v-for="s in cell.sessions" :key="s.id" class="sess"
-               :class="[s.pcu!=null ? 'past':'future', { 'vip': isVip(s) }]"
-               @click="openDetail(s)">
-            <div class="sess-title">
-              <span v-if="isVip(s)" class="vip-star" title="重点关注官号/高优">★</span>
-              <span v-if="s.pcu==null" class="sess-time">{{ hhmm(s.session_time) }}</span>{{ s.title }}
-            </div>
-            <div class="sess-metric">
-              <span v-if="s.anchor_name" class="anchor">{{ s.anchor_name }}</span>
-              <span v-if="s.pcu!=null" class="peak-time">峰值 {{ hhmm(s.session_time) }}</span>
-              <span v-if="s.pcu!=null" class="pcu">PCU {{ fmt(s.pcu) }}</span>
-              <span v-if="s.reservation!=null" class="rsv">预约 {{ fmt(s.reservation) }}</span>
+      <template v-for="(cell, i) in cells" :key="i">
+        <div v-if="cell.blank" class="day-cell blank"></div>
+        <div v-else class="day-cell"
+             :class="{ 'is-today': cell.isToday, 'has-sess': cell.sessions.length }"
+             @click="openDay(cell)">
+          <div class="day-num">{{ cell.day }}<span v-if="cell.sessions.length" class="day-count">{{ cell.sessions.length }}场</span></div>
+          <div class="sess-list">
+            <div v-for="s in cell.sessions" :key="s.id" class="sess"
+                 :class="[s.pcu!=null ? 'past':'future', { 'vip': isVip(s) }]"
+                 @click.stop="openDetail(s)">
+              <div class="sess-title">
+                <span v-if="isVip(s)" class="vip-star" title="重点关注官号/高优">★</span>
+                <span v-if="s.pcu==null" class="sess-time">{{ hhmm(s.session_time) }}</span>{{ s.title }}
+              </div>
+              <div class="sess-metric">
+                <span v-if="s.anchor_name" class="anchor">{{ s.anchor_name }}</span>
+                <span v-if="s.pcu!=null" class="peak-time">峰值 {{ hhmm(s.session_time) }}</span>
+                <span v-if="s.pcu!=null" class="pcu">PCU {{ fmt(s.pcu) }}</span>
+                <span v-if="s.reservation!=null" class="rsv">预约 {{ fmt(s.reservation) }}</span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </template>
     </div>
 
-    <!-- 详情抽屉 -->
+    <!-- 当天全部场次弹窗 -->
+    <el-dialog v-model="dayDialog" :title="dayTitle" width="640px" top="8vh" class="day-dialog">
+      <div v-if="dayCell" class="day-detail">
+        <el-empty v-if="!dayCell.sessions.length" description="当天暂无直播数据" />
+        <div v-for="s in dayCell.sessions" :key="s.id" class="dd-sess"
+             :class="[s.pcu!=null ? 'past':'future', { 'vip': isVip(s) }]">
+          <div class="dd-top">
+            <span v-if="isVip(s)" class="vip-star">★</span>
+            <span class="dd-title">{{ s.title }}</span>
+          </div>
+          <div class="dd-rows">
+            <span v-if="s.anchor_name" class="dd-chip anchor">{{ s.anchor_name }}</span>
+            <span v-if="s.pcu!=null" class="dd-chip time">峰值 {{ hhmm(s.session_time) }}</span>
+            <span v-else class="dd-chip time">开播 {{ hhmm(s.session_time) }}</span>
+            <span v-if="s.pcu!=null" class="dd-chip pcu">PCU {{ fmt(s.pcu) }}</span>
+            <span v-if="s.reservation!=null" class="dd-chip rsv">预约 {{ fmt(s.reservation) }}</span>
+            <span v-if="s.room_id" class="dd-chip room">房间 {{ s.room_id }}</span>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- 单场详情抽屉 -->
     <el-drawer v-model="drawer" :title="detail?.title || '场次详情'" size="380px">
       <div v-if="detail" class="detail">
         <div v-if="isVip(detail)" class="vip-banner">★ 重点关注 · 官号/高优直播</div>
@@ -70,6 +96,13 @@ const sessions = ref([])
 const loading = ref(false)
 const drawer = ref(false)
 const detail = ref(null)
+const dayDialog = ref(false)
+const dayCell = ref(null)
+const dayTitle = computed(() => {
+  if (!dayCell.value) return ''
+  const n = dayCell.value.sessions.length
+  return `${dayCell.value.date}  ·  共 ${n} 场`
+})
 
 const fmt = (n) => n == null ? '' : (n >= 10000 ? (n / 10000).toFixed(1) + 'w' : String(n))
 const hhmm = (t) => (t || '').slice(11, 16)   // 'YYYY-MM-DD HH:MM:SS' → 'HH:MM'
@@ -112,6 +145,13 @@ const cells = computed(() => {
   const d = new Date(start)
   while (d <= end) {
     const key = ymd(d)
+    const inMonth = viewMode.value === 'week' ? true : d.getMonth() === mAnchor
+    // 月视图下非当月的格子：留空占位(不显示日期/场次)
+    if (!inMonth) {
+      out.push({ blank: true, date: key })
+      d.setDate(d.getDate() + 1)
+      continue
+    }
     // 排序：有PCU的(过去/已开播)按PCU降序；纯预约的(未来)按预约量降序
     const metric = (s) => (s.pcu != null ? s.pcu : (s.reservation != null ? s.reservation : -1))
     const daySess = sessions.value.filter(s => (s.session_time || '').slice(0,10) === key)
@@ -120,7 +160,7 @@ const cells = computed(() => {
       day: d.getDate(),
       date: key,
       isToday: isSameDay(d, today),
-      inRange: viewMode.value === 'week' ? true : d.getMonth() === mAnchor,
+      inRange: true,
       sessions: daySess,
     })
     d.setDate(d.getDate() + 1)
@@ -145,6 +185,7 @@ function shift(n) {
 }
 function goToday() { anchor.value = new Date() }
 function openDetail(s) { detail.value = s; drawer.value = true }
+function openDay(cell) { dayCell.value = cell; dayDialog.value = true }
 function enterRoom() { if (detail.value?.room_url) window.open(detail.value.room_url, '_blank') }
 
 watch([viewMode, anchor], load)
@@ -160,14 +201,16 @@ onMounted(load)
 .cur-label { font-weight: 600; color: #2f4368; min-width: 120px; text-align: center; }
 .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; width: 100%; box-sizing: border-box; }
 .weekday { text-align: center; font-size: 14px; color: #8a96a8; padding: 6px 0; font-weight: 600; }
-.day-cell { min-height: 150px; min-width: 0; box-sizing: border-box; overflow: hidden; border: 1px solid #e3e8f0; border-radius: 8px; padding: 6px 8px; background: #fff; display: flex; flex-direction: column; }
-.cal-grid.week .day-cell { min-height: 460px; }
-.day-cell.other-month { background: #f7f9fc; opacity: .6; }
+.day-cell { height: 200px; min-width: 0; box-sizing: border-box; overflow: hidden; border: 1px solid #e3e8f0; border-radius: 8px; padding: 6px 8px; background: #fff; display: flex; flex-direction: column; cursor: pointer; transition: box-shadow .15s; }
+.day-cell:not(.blank):hover { box-shadow: 0 2px 12px rgba(47,107,214,.18); border-color: #b9cdf0; }
+.cal-grid.week .day-cell { height: 520px; }
+.day-cell.blank { background: transparent; border: 1px dashed #eef1f6; cursor: default; }
 .day-cell.is-today { border-color: #2f6bd6; box-shadow: 0 0 0 1px #2f6bd6 inset; }
 .day-cell.has-sess { background: linear-gradient(180deg,#f5f9ff,#fff); }
-.day-num { font-size: 14px; color: #909399; margin-bottom: 4px; font-weight: 600; }
+.day-num { font-size: 14px; color: #909399; margin-bottom: 4px; font-weight: 600; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; }
+.day-count { font-size: 11px; color: #2f6bd6; background: #eaf1fc; border-radius: 8px; padding: 0 7px; font-weight: 600; }
 .day-cell.is-today .day-num { color: #2f6bd6; font-weight: 700; }
-.sess-list { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; overflow-x: hidden; min-width: 0; }
+.sess-list { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; overflow-x: hidden; min-width: 0; flex: 1 1 auto; }
 .sess { cursor: pointer; border-radius: 6px; padding: 5px 7px; font-size: 13px; border-left: 4px solid #c0c4cc; background: #f4f6fa; min-width: 0; overflow: hidden; }
 .sess:hover { background: #e9f0fb; }
 .sess.past { border-left-color: #e8a33d; }
@@ -187,6 +230,22 @@ onMounted(load)
 .sess.vip .pcu, .sess.vip .rsv { font-weight:700; }
 .vip-star { color:#e8520f; font-weight:900; font-size:15px; margin-right:3px; text-shadow:0 0 3px rgba(232,82,15,.4); }
 .vip-banner { background:linear-gradient(90deg,#ff7a18,#ffb020); color:#fff; border:none; border-radius:8px; padding:11px 14px; font-weight:800; margin-bottom:14px; font-size:15px; letter-spacing:1px; box-shadow:0 2px 10px rgba(232,82,15,.35); }
+/* 当天全部场次弹窗 */
+.day-detail { display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow-y: auto; }
+.dd-sess { border: 1px solid #e3e8f0; border-left: 4px solid #c0c4cc; border-radius: 8px; padding: 12px 14px; background: #fafbfd; }
+.dd-sess.past { border-left-color: #e8a33d; }
+.dd-sess.future { border-left-color: #2f9e5e; }
+.dd-sess.vip { border-left-color: #e8520f; background: linear-gradient(135deg,#fff7ec,#fff); box-shadow: 0 0 0 1px #f0a020 inset; }
+.dd-top { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.dd-title { font-weight: 700; font-size: 15px; color: #1a2b4a; }
+.dd-sess.vip .dd-title { color: #b3401a; }
+.dd-rows { display: flex; flex-wrap: wrap; gap: 8px; }
+.dd-chip { font-size: 12.5px; padding: 2px 10px; border-radius: 12px; font-weight: 600; }
+.dd-chip.anchor { background: #f0edfb; color: #7a6ad0; }
+.dd-chip.time { background: #eaf1fc; color: #2f6bd6; }
+.dd-chip.pcu { background: #fdf1e2; color: #b3701a; }
+.dd-chip.rsv { background: #eaf7ef; color: #2f9e5e; }
+.dd-chip.room { background: #f4f4f5; color: #707684; }
 .detail .d-row { display: flex; padding: 8px 0; border-bottom: 1px solid #f0f2f5; font-size: 14px; }
 .detail .d-lbl { width: 80px; color: #909399; }
 </style>
