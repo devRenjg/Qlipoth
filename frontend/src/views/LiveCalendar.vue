@@ -70,7 +70,7 @@
     <!-- 单场详情抽屉 -->
     <el-drawer v-model="drawer" :title="detail?.title || '场次详情'" size="380px">
       <div v-if="detail" class="detail">
-        <div v-if="isVip(detail)" class="vip-banner">★ 重点关注 · 官号/高优直播</div>
+        <div v-if="isVip(detail)" class="vip-banner">★ 重点关注直播场次</div>
         <div class="d-row"><span class="d-lbl">{{ detail.pcu!=null ? 'PCU峰值时间' : '开播时间' }}</span><span>{{ detail.session_time }}</span></div>
         <div class="d-row"><span class="d-lbl">主播</span><span>{{ detail.anchor_name || '—' }}</span></div>
         <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">PCU</span><span>{{ fmt(detail.pcu) }}</span></div>
