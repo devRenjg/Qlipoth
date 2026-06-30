@@ -24,7 +24,7 @@
         <div v-else class="day-cell"
              :class="{ 'is-today': cell.isToday, 'has-sess': cell.sessions.length }"
              @click="openDay(cell)">
-          <div class="day-num">{{ cell.day }}<span v-if="cell.sessions.length" class="day-count">{{ cell.sessions.length }}场</span></div>
+          <div class="day-num">{{ cell.day }}</div>
           <div class="sess-list">
             <div v-for="s in cell.sessions" :key="s.id" class="sess"
                  :class="[s.pcu!=null ? 'past':'future', { 'vip': isVip(s) }]"
@@ -207,8 +207,7 @@ onMounted(load)
 .day-cell.blank { background: transparent; border: 1px dashed #eef1f6; cursor: default; }
 .day-cell.is-today { border-color: #2f6bd6; box-shadow: 0 0 0 1px #2f6bd6 inset; }
 .day-cell.has-sess { background: linear-gradient(180deg,#f5f9ff,#fff); }
-.day-num { font-size: 14px; color: #909399; margin-bottom: 4px; font-weight: 600; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; }
-.day-count { font-size: 11px; color: #2f6bd6; background: #eaf1fc; border-radius: 8px; padding: 0 7px; font-weight: 600; }
+.day-num { font-size: 14px; color: #909399; margin-bottom: 4px; font-weight: 600; flex: 0 0 auto; }
 .day-cell.is-today .day-num { color: #2f6bd6; font-weight: 700; }
 .sess-list { display: flex; flex-direction: column; gap: 4px; overflow: visible; min-width: 0; }
 .sess { cursor: pointer; border-radius: 6px; padding: 5px 7px; font-size: 13px; border-left: 4px solid #c0c4cc; background: #f4f6fa; min-width: 0; overflow: hidden; }
