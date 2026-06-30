@@ -9,7 +9,7 @@ except Exception:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
-from routes import upload, query, documents, openspec, checklist, battlemap, live_calendar
+from routes import upload, query, documents, openspec, checklist, battlemap, live_calendar, maoer712
 from auth import router as auth_router
 
 
@@ -43,6 +43,7 @@ app.include_router(openspec.router, prefix="/api")
 app.include_router(checklist.router, prefix="/api")
 app.include_router(battlemap.router, prefix="/api")
 app.include_router(live_calendar.router, prefix="/api")
+app.include_router(maoer712.router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 
 
