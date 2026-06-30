@@ -1,5 +1,6 @@
 <template>
   <div class="m712">
+    <div class="m712-back" @click="$router.push('/case-analysis')">← 返回案例分析</div>
     <div class="m712-head">
       <h2>🎬 猫耳 712 直播活动 · 方案盲点提醒</h2>
       <p class="sub">基于 B 站大型直播活动保障经验（作战地图），对比猫耳 712 站庆方案，提示尚未覆盖或考虑不足的风险点</p>
@@ -72,6 +73,8 @@ onMounted(async () => {
 
 <style scoped>
 .m712 { max-width: 1000px; margin: 0 auto; padding: 16px 20px 40px; }
+.m712-back { display: inline-block; cursor: pointer; color: #2f6bd6; font-size: 13px; margin-bottom: 12px; user-select: none; }
+.m712-back:hover { text-decoration: underline; }
 .m712-head h2 { margin: 0 0 6px; font-size: 22px; color: #1a2b4a; }
 .m712-head .sub { color: #6b7a90; font-size: 13px; margin: 0 0 18px; line-height: 1.6; }
 .card { background: #fff; border: 1px solid #e3e8f0; border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }

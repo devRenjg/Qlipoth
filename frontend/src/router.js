@@ -6,6 +6,7 @@ const routes = [
   { path: '/checklist', component: () => import('./views/Checklist.vue') },
   { path: '/battlemap', component: () => import('./views/BattleMap.vue') },
   { path: '/live-calendar', component: () => import('./views/LiveCalendar.vue') },
+  { path: '/case-analysis', component: () => import('./views/CaseAnalysis.vue') },
   { path: '/maoer712', component: () => import('./views/Maoer712.vue') },
   { path: '/upload', component: () => import('./views/Upload.vue') },
   { path: '/documents', component: () => import('./views/Documents.vue') },
