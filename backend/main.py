@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
 
 import os
 
-app = FastAPI(title="克里珀 - 大型活动保障知识库", version="20260630.1", lifespan=lifespan)
+app = FastAPI(title="克里珀 - 大型活动保障知识库", version="20260701.1", lifespan=lifespan)
 
 # CORS: 默认本地开发域名；生产用环境变量 QLIPOTH_CORS_ORIGINS(逗号分隔)指定白名单。
 # allow_credentials=True 时不能用通配 "*"(浏览器会拒绝带凭据请求)，故用明确白名单。
