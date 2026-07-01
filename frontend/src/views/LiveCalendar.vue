@@ -27,11 +27,12 @@
           <div class="day-num">{{ cell.day }}</div>
           <div class="sess-list">
             <div v-for="s in cell.sessions" :key="s.id" class="sess"
-                 :class="[s.pcu!=null ? 'past':'future', { 'vip': isVip(s) }]"
+                 :class="sessClass(s)"
                  @click.stop="openDetail(s)">
               <div class="sess-title">
-                <span v-if="isVip(s)" class="vip-star" title="重点关注官号/高优">★</span>
-                <span v-if="s.pcu==null" class="sess-time">{{ hhmm(s.session_time) }}</span>{{ s.title }}
+                <span v-if="isMega(s)" class="mega-badge" title="百万级PCU 顶流场次">🔥</span>
+                <span v-else-if="isVip(s)" class="vip-star" title="重点关注官号/高优">★</span>
+                <span v-if="s.pcu==null" class="sess-time">{{ hhmm(s.session_time) }}</span>{{ s.title }}<span v-if="isContFlow(s)" class="cont-flow-tag" title="长期持续流：标题为开流初始值，不代表当天实际内容">持续流</span>
               </div>
               <div class="sess-metric">
                 <span v-if="s.anchor_name" class="anchor">{{ s.anchor_name }}</span>
@@ -50,18 +51,22 @@
       <div v-if="dayCell" class="day-detail">
         <el-empty v-if="!dayCell.sessions.length" description="当天暂无直播数据" />
         <div v-for="s in dayCell.sessions" :key="s.id" class="dd-sess"
-             :class="[s.pcu!=null ? 'past':'future', { 'vip': isVip(s) }]">
+             :class="sessClass(s)">
           <div class="dd-top">
-            <span v-if="isVip(s)" class="vip-star">★</span>
+            <span v-if="isMega(s)" class="mega-badge" title="百万级PCU 顶流场次">🔥</span>
+            <span v-else-if="isVip(s)" class="vip-star">★</span>
             <span class="dd-title">{{ s.title }}</span>
+            <span v-if="isContFlow(s)" class="cont-flow-tag">持续流</span>
           </div>
+          <div v-if="isContFlow(s)" class="cont-flow-hint">⚠️ 该直播间为长期持续流，此标题是开流时的初始标题，多天不变，不代表当天实际直播内容（如赛事每日对阵需另查赛程）。</div>
           <div class="dd-rows">
             <span v-if="s.anchor_name" class="dd-chip anchor">{{ s.anchor_name }}</span>
             <span v-if="s.pcu!=null" class="dd-chip time">峰值 {{ hhmm(s.session_time) }}</span>
             <span v-else class="dd-chip time">开播 {{ hhmm(s.session_time) }}</span>
             <span v-if="s.pcu!=null" class="dd-chip pcu">PCU {{ fmt(s.pcu) }}</span>
             <span v-if="s.reservation!=null" class="dd-chip rsv">预约 {{ fmt(s.reservation) }}</span>
-            <span v-if="s.room_id" class="dd-chip room">房间 {{ s.room_id }}</span>
+            <a v-if="s.room_id && s.room_url" class="dd-chip room room-link" :href="s.room_url" target="_blank" rel="noopener" @click.stop>房间 {{ s.room_id }} ↗</a>
+            <span v-else-if="s.room_id" class="dd-chip room">房间 {{ s.room_id }}</span>
           </div>
         </div>
       </div>
@@ -110,6 +115,25 @@ const hhmm = (t) => (t || '').slice(11, 16)   // 'YYYY-MM-DD HH:MM:SS' → 'HH:M
 // 重点关注官号/高优Up白名单(主播名精确匹配)→ 特殊标识
 const VIP_ANCHORS = ['哔哩哔哩弹幕网', '哔哩哔哩直播', '影视飓风', '哔哩哔哩英雄联盟赛事', '哔哩哔哩晚会', '央视新闻']
 const isVip = (s) => VIP_ANCHORS.includes((s.anchor_name || '').trim())
+// 百万级 PCU 场次:最高优先级高亮(超过白名单官号)
+const isMega = (s) => s.pcu != null && s.pcu >= 1000000
+// 持续流识别:同一直播间(room_id)+同一标题 在当前视图内跨>=3天出现,判为长期持续流——
+// 标题是开流时的初始值、不随每天实际内容(如S赛每日对阵)更新,提示用户勿把标题当当天内容。
+// (阈值取3天:2天多为跨夜直播或同标题巧合,3天以上才明显是长期挂流)
+const contFlowKeys = computed(() => {
+  const dayset = {}  // key: room_id||title  → Set(日期)
+  for (const s of sessions.value) {
+    if (!s.room_id || !s.title || s.pcu == null) continue
+    const k = s.room_id + '||' + s.title
+    ;(dayset[k] || (dayset[k] = new Set())).add((s.session_time || '').slice(0, 10))
+  }
+  const keys = new Set()
+  for (const k in dayset) if (dayset[k].size >= 3) keys.add(k)   // >=3天同room+title 才判持续流(2天多为跨夜/巧合,避免误标)
+  return keys
+})
+const isContFlow = (s) => !!s.room_id && !!s.title && contFlowKeys.value.has(s.room_id + '||' + s.title)
+// 场次视觉分级 class:mega(百万PCU,最亮) > vip(白名单官号,次亮) > 普通
+const sessClass = (s) => [s.pcu != null ? 'past' : 'future', isMega(s) ? 'mega' : (isVip(s) ? 'vip' : '')]
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 const isSameDay = (a, b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate()
 
@@ -223,21 +247,33 @@ onMounted(load)
 .sess-metric .peak-time { color:#2f6bd6; font-weight:600; }
 .sess-metric .pcu { color: #b3701a; font-weight: 600; }
 .sess-metric .rsv { color: #2f9e5e; font-weight: 600; }
-.sess.vip { border-left:4px solid #e8520f !important; background:linear-gradient(135deg,#fff0d0,#ffe1b0) !important; box-shadow:0 0 0 2px #f0a020 inset, 0 2px 8px rgba(232,82,15,.25); }
-.sess.vip .sess-title { font-size:13.5px; font-weight:700; color:#b3401a; }
-.sess.vip .anchor { color:#c0392b !important; font-weight:700; }
-.sess.vip .pcu, .sess.vip .rsv { font-weight:700; }
-.vip-star { color:#e8520f; font-weight:900; font-size:15px; margin-right:3px; text-shadow:0 0 3px rgba(232,82,15,.4); }
+/* 白名单官号(次级高优):淡化处理——明显高于普通、但低于百万级mega */
+.sess.vip { border-left:4px solid #f0a852 !important; background:linear-gradient(135deg,#fff8ec,#fff1d8) !important; box-shadow:0 0 0 1px #f3c98a inset; }
+.sess.vip .sess-title { font-size:13px; font-weight:600; color:#b5722a; }
+.sess.vip .anchor { color:#c07a28 !important; font-weight:600; }
+.sess.vip .pcu, .sess.vip .rsv { font-weight:600; }
+.vip-star { color:#e8952f; font-weight:900; font-size:14px; margin-right:3px; }
+/* 百万级PCU(最高优先):最强高亮——红金渐变+发光边框+加粗放大 */
+.sess.mega { border-left:5px solid #e01f1f !important; background:linear-gradient(135deg,#ffe08a,#ff9d5c,#ff6b6b) !important; box-shadow:0 0 0 2px #ff3b3b inset, 0 0 12px rgba(255,60,60,.55); }
+.sess.mega .sess-title { font-size:14px; font-weight:800; color:#7a1010; }
+.sess.mega .anchor { color:#a01515 !important; font-weight:800; }
+.sess.mega .pcu { color:#c0140a !important; font-weight:900; }
+.mega-badge { font-size:15px; margin-right:3px; filter:drop-shadow(0 0 3px rgba(255,80,0,.6)); }
+/* 持续流标注:格子内小灰标签 + 弹窗内提示行 */
+.cont-flow-tag { display:inline-block; margin-left:5px; font-size:10px; font-weight:600; color:#8a7500; background:#fff5cc; border:1px solid #ecd98a; border-radius:6px; padding:0 5px; vertical-align:middle; white-space:nowrap; }
+.cont-flow-hint { margin-top:6px; font-size:12px; color:#9a7b1a; background:#fffbe8; border-left:3px solid #ecc94b; border-radius:4px; padding:6px 10px; line-height:1.5; }
 .vip-banner { background:linear-gradient(90deg,#ff7a18,#ffb020); color:#fff; border:none; border-radius:8px; padding:11px 14px; font-weight:800; margin-bottom:14px; font-size:15px; letter-spacing:1px; box-shadow:0 2px 10px rgba(232,82,15,.35); }
 /* 当天全部场次弹窗 */
 .day-detail { display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow-y: auto; }
 .dd-sess { border: 1px solid #e3e8f0; border-left: 4px solid #c0c4cc; border-radius: 8px; padding: 12px 14px; background: #fafbfd; }
 .dd-sess.past { border-left-color: #e8a33d; }
 .dd-sess.future { border-left-color: #2f9e5e; }
-.dd-sess.vip { border-left-color: #e8520f; background: linear-gradient(135deg,#fff7ec,#fff); box-shadow: 0 0 0 1px #f0a020 inset; }
+.dd-sess.vip { border-left-color: #f0a852; background: linear-gradient(135deg,#fff8ec,#fff); box-shadow: 0 0 0 1px #f3c98a inset; }
+.dd-sess.mega { border-left-color: #e01f1f; border-left-width: 5px; background: linear-gradient(135deg,#fff0d0,#ffe0dc,#fff); box-shadow: 0 0 0 1px #ff5b5b inset, 0 0 10px rgba(255,60,60,.4); }
 .dd-top { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .dd-title { font-weight: 700; font-size: 15px; color: #1a2b4a; }
-.dd-sess.vip .dd-title { color: #b3401a; }
+.dd-sess.vip .dd-title { color: #b5722a; }
+.dd-sess.mega .dd-title { color: #7a1010; font-weight: 800; }
 .dd-rows { display: flex; flex-wrap: wrap; gap: 8px; }
 .dd-chip { font-size: 12.5px; padding: 2px 10px; border-radius: 12px; font-weight: 600; }
 .dd-chip.anchor { background: #f0edfb; color: #7a6ad0; }
@@ -245,6 +281,8 @@ onMounted(load)
 .dd-chip.pcu { background: #fdf1e2; color: #b3701a; }
 .dd-chip.rsv { background: #eaf7ef; color: #2f9e5e; }
 .dd-chip.room { background: #f4f4f5; color: #707684; }
+.dd-chip.room-link { cursor: pointer; text-decoration: none; transition: all .15s; }
+.dd-chip.room-link:hover { background: #e0edff; color: #2f6bd6; }
 .detail .d-row { display: flex; padding: 8px 0; border-bottom: 1px solid #f0f2f5; font-size: 14px; }
 .detail .d-lbl { width: 80px; color: #909399; }
 </style>
