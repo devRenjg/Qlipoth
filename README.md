@@ -1,6 +1,6 @@
 # Qlipoth — 基于 Agentic Search 的知识库系统
 
-`版本 v20260630.1` · `Python 3.12 + FastAPI` · `Vue 3 + Vite`
+`版本 v20260701.1` · `Python 3.12 + FastAPI` · `Vue 3 + Vite`
 
 > 一个面向团队的知识库问答系统：文档以纯文本存储，查询时由 LLM 生成搜索策略、用 ripgrep 实时检索，再由 LLM 整合生成回答。零向量数据库依赖。
 
