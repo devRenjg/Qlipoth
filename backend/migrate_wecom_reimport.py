@@ -68,13 +68,18 @@ def _header(md: str) -> str:
 
 
 def _metrics(md: str) -> dict:
-    """质量指标：纯文本字数(去图片)、图片数、表格行数、乱码特征数。"""
+    """质量指标：纯文本字数(去图片)、中文有效字数、图片数、表格行数、乱码特征数。
+
+    cn_len(中文字符数)是判定内容是否真丢失的核心信号：旧版被 base64/protobuf 乱码
+    长串撑高 text_len，但中文有效内容很少；新版清掉乱码后 text_len 骤减而中文几乎不变。
+    """
     no_img = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", md)
     text_len = len(re.sub(r"\s+", "", no_img))
+    cn_len = len(re.findall(r"[一-鿿]", md))
     imgs = len(re.findall(r"!\[[^\]]*\]\([^)]*\)", md))
     table_rows = len(re.findall(r"^\s*\|.*\|", md, re.M)) + md.count("\n|")
     garble = len(_GARBLE_RE.findall(md))
-    return {"text_len": text_len, "imgs": imgs, "tables": table_rows, "garble": garble}
+    return {"text_len": text_len, "cn_len": cn_len, "imgs": imgs, "tables": table_rows, "garble": garble}
 
 
 def _judge(old: dict, new: dict) -> tuple[str, str]:
@@ -84,6 +89,8 @@ def _judge(old: dict, new: dict) -> tuple[str, str]:
     - 丢图：旧有图(≥3)而新几乎没有（新 < 旧的 30%）
     - 大量丢表格：旧表格多(≥10行)而新骤减到不足 30%
     - 内容近乎全失：新正文 < 旧的 15% 且新无图无表（疑似读取残缺）
+      例外：若中文有效字数基本保留（新 ≥ 旧×90%），说明旧版总字数是被乱码长串撑高的、
+      新版只是清掉了乱码，实质内容没丢 → 判 better 放行（不再拦）。
     其余一律 better。倒退的标记 worse 供人工复核，不自动覆盖。
     """
     reasons = []
@@ -95,6 +102,11 @@ def _judge(old: dict, new: dict) -> tuple[str, str]:
         reasons.append(f"表格骤减 {old['tables']}→{new['tables']}")
         return "worse", "；".join(reasons)
     if old["text_len"] > 200 and new["text_len"] < old["text_len"] * 0.15 and new["imgs"] == 0 and new["tables"] < 3:
+        # 中文有效字数保护：旧版乱码撑高、新版清乱码后中文基本不变 → 放行
+        cn_ok = old.get("cn_len", 0) > 0 and new.get("cn_len", 0) >= old["cn_len"] * 0.9
+        if cn_ok:
+            reasons.append(f"旧版乱码为主(中文{old['cn_len']}→{new['cn_len']}基本保留)、新版精简清晰")
+            return "better", "；".join(reasons)
         reasons.append(f"内容近乎全失 正文{old['text_len']}→{new['text_len']}、无图无表")
         return "worse", "；".join(reasons)
     # 默认替换，附改善亮点（便于报告）
@@ -331,9 +343,12 @@ async def main():
         fn = r["file"]
         if r.get("written"):
             ok += 1
-        is_rl = "851010" in r.get("reason", "") or "851000" in r.get("reason", "")
-        if is_rl:
-            # 记录限流失败次数，下批排队尾，避免每批都先撞同一批读不到的文档
+        # 851000 = mind 思维导图格式,API 天生读不了,不该重试:直接记入跳过清单(以后改用 Playwright 导入)
+        if "851000" in r.get("reason", ""):
+            _add_skip(fn, "mind思维导图格式,API不支持(851000),改用Playwright导入")
+            consec_rl = 0
+        elif "851010" in r.get("reason", ""):
+            # 851010 = 频率限流:记录失败次数,下批排队尾;连续5次判定配额耗尽,早停
             fails[fn] = fails.get(fn, 0) + 1
             consec_rl += 1
             if consec_rl >= 5:

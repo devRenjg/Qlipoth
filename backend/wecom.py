@@ -30,7 +30,9 @@ class WecomError(Exception):
 
 
 # 限流相关 errcode（读文档频率超限），需退避重试
-RATE_LIMIT_CODES = {851010, 851000}
+RATE_LIMIT_CODES = {851010}
+# 格式不支持 errcode（如 mind 思维导图，API 读不了），不该重试，应直接跳过、改用 Playwright 导入
+UNSUPPORTED_FORMAT_CODES = {851000}
 
 
 def _cli_cmd() -> list[str]:
