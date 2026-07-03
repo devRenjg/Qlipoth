@@ -1,8 +1,9 @@
 <template>
-  <div v-if="ready && !user" class="login-page">
+  <div v-if="ready && showLogin" class="login-page">
     <div class="login-card">
       <div class="login-logo">克里珀</div>
       <p class="login-desc">大型直播活动保障知识库</p>
+      <div class="login-close"><a href="#" @click.prevent="showLogin = false">以访客身份浏览 →</a></div>
       <el-input
         v-model="username"
         placeholder="用户名"
@@ -47,7 +48,7 @@
       <p v-if="isRegisterMode" class="login-hint">密码要求：8位以上，含大小写字母、数字和特殊字符</p>
     </div>
   </div>
-  <el-container class="app-container" v-if="ready && user">
+  <el-container class="app-container" v-if="ready && !showLogin">
     <el-header class="app-header">
       <div class="logo"><span class="logo-mark">◆</span>克里珀</div>
       <el-menu mode="horizontal" :default-active="activeRoute" router class="nav-menu">
@@ -56,16 +57,22 @@
         <el-menu-item index="/live-calendar">直播日历</el-menu-item>
         <el-menu-item index="/checklist">保障清单</el-menu-item>
         <el-menu-item index="/case-analysis">案例分析</el-menu-item>
-        <el-menu-item index="/upload" v-if="user.role !== 'user'">上传文档</el-menu-item>
-        <el-menu-item index="/documents" v-if="user.role !== 'user'">文档管理</el-menu-item>
-        <el-menu-item index="/profiling" v-if="user.role === 'admin'">性能分析</el-menu-item>
-        <el-menu-item index="/settings" v-if="user.role === 'admin'">设置</el-menu-item>
-        <el-menu-item index="/users" v-if="user.role === 'admin'">用户管理</el-menu-item>
-        <el-menu-item index="/openspec" v-if="user.role === 'admin'">OpenSpec</el-menu-item>
+        <el-menu-item index="/upload" v-if="effectiveRole !== 'user'">上传文档</el-menu-item>
+        <el-menu-item index="/documents" v-if="effectiveRole !== 'user'">文档管理</el-menu-item>
+        <el-menu-item index="/profiling" v-if="effectiveRole === 'admin'">性能分析</el-menu-item>
+        <el-menu-item index="/settings" v-if="effectiveRole === 'admin'">设置</el-menu-item>
+        <el-menu-item index="/users" v-if="effectiveRole === 'admin'">用户管理</el-menu-item>
+        <el-menu-item index="/openspec" v-if="effectiveRole === 'admin'">OpenSpec</el-menu-item>
       </el-menu>
       <div class="user-info">
-        <span class="username">{{ user.username }}</span>
-        <el-button size="small" text type="info" @click="handleLogout">退出</el-button>
+        <template v-if="user">
+          <span class="username">{{ user.username }}</span>
+          <el-button size="small" text type="info" @click="handleLogout">退出</el-button>
+        </template>
+        <template v-else>
+          <span class="username anonymous">访客</span>
+          <el-button size="small" text type="info" @click="openLogin">登录</el-button>
+        </template>
       </div>
     </el-header>
     <el-main class="app-main" :class="{ 'full-width': isChatPage, 'wide-width': isWidePage }">
@@ -86,6 +93,7 @@ const isChatPage = computed(() => route.path === '/chat')
 const isWidePage = computed(() => route.path === '/live-calendar')
 const user = ref(null)
 const ready = ref(false)
+const showLogin = ref(false)   // 登录弹层:默认不显示,访客直接进;点"登录"才显示
 const username = ref('')
 const password = ref('')
 const confirmPassword = ref('')
@@ -94,14 +102,22 @@ const submitting = ref(false)
 const loginError = ref('')
 
 provide('currentUser', user)
+// 有效角色:登录用户用其真实 role,访客(未登录)视为普通用户 user
+const effectiveRole = computed(() => user.value?.role || 'user')
 
 onMounted(async () => {
   try {
     const { data } = await getCurrentUser()
-    user.value = data.user
+    user.value = data.user   // 未登录时后端返回 null,保持访客态
   } catch {}
   ready.value = true
 })
+
+function openLogin() {
+  loginError.value = ''
+  isRegisterMode.value = false
+  showLogin.value = true
+}
 
 async function handleLogin() {
   if (!username.value.trim() || !password.value) return
@@ -110,6 +126,8 @@ async function handleLogin() {
   try {
     const { data } = await loginUser(username.value.trim(), password.value)
     user.value = data.user
+    showLogin.value = false
+    password.value = ''
   } catch (err) {
     loginError.value = err.response?.data?.detail || '登录失败'
   } finally {
@@ -128,6 +146,7 @@ async function handleRegister() {
   try {
     const { data } = await registerUser(username.value.trim(), password.value)
     user.value = data.user
+    showLogin.value = false
     ElMessage.success('注册成功')
   } catch (err) {
     loginError.value = err.response?.data?.detail || '注册失败'
@@ -260,6 +279,9 @@ body {
 }
 .login-input { margin-bottom: 12px; }
 .login-switch { margin-top: 16px; font-size: 13px; color: #666; }
+.login-close { text-align: right; margin-bottom: 12px; }
+.login-close a { color: #909399; font-size: 13px; text-decoration: none; }
+.login-close a:hover { color: #2f6bd6; }
 .login-switch a { color: #4d6bfe; text-decoration: none; }
 .login-switch a:hover { text-decoration: underline; }
 .login-error {

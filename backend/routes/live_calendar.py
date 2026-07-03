@@ -1,6 +1,7 @@
 """直播日历：按时间范围查询重要直播场次(过去PCU / 未来预约)。
 数据写入由外部取数流程负责，本路由只读。"""
 import os
+import json
 import aiosqlite
 from fastapi import APIRouter, Depends
 from database import DB_PATH
@@ -23,7 +24,9 @@ async def list_sessions(start: str, end: str, user: dict = Depends(require_login
         db.row_factory = aiosqlite.Row
         rows = await (await db.execute(
             "SELECT id, session_time, title, anchor_name, pcu, reservation, room_id, "
-            "watch_hours, danmu_count, fans_growth "
+            "watch_hours_fans, watch_hours_all, danmu_fans, danmu_all, "
+            "enter_dau_fans, enter_dau_all, fans_growth_fans, fans_growth_all, "
+            "is_report, report_info "
             "FROM live_sessions WHERE session_time >= ? AND session_time <= ? "
             "ORDER BY session_time ASC",
             (start, end + " 23:59:59" if len(end) == 10 else end),
@@ -38,9 +41,16 @@ async def list_sessions(start: str, end: str, user: dict = Depends(require_login
             "reservation": r["reservation"],
             "room_id": r["room_id"] or "",
             "room_url": _room_url(r["room_id"] or ""),
-            "watch_hours": r["watch_hours"],
-            "danmu_count": r["danmu_count"],
-            "fans_growth": r["fans_growth"],
+            "watch_hours_fans": r["watch_hours_fans"],
+            "watch_hours_all": r["watch_hours_all"],
+            "danmu_fans": r["danmu_fans"],
+            "danmu_all": r["danmu_all"],
+            "enter_dau_fans": r["enter_dau_fans"],
+            "enter_dau_all": r["enter_dau_all"],
+            "fans_growth_fans": r["fans_growth_fans"],
+            "fans_growth_all": r["fans_growth_all"],
+            "is_report": r["is_report"],
+            "report_info": json.loads(r["report_info"]) if r["report_info"] else None,
         }
         for r in rows
     ]

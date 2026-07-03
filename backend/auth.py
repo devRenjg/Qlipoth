@@ -12,7 +12,7 @@ router = APIRouter(tags=["user"])
 
 _BJ_TZ = timezone(timedelta(hours=8))
 COOKIE_NAME = "qlipoth_token"
-COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+COOKIE_MAX_AGE = 60 * 60 * 24 * 365  # 1 year(登录后长期保持,不重复弹窗)
 # 生产 HTTPS 部署设 QLIPOTH_COOKIE_SECURE=1 启用 Secure；本地开发默认关(否则 http 无法调试登录)
 import os as _os
 COOKIE_SECURE = _os.environ.get("QLIPOTH_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
@@ -36,12 +36,16 @@ async def _user_from_token(request: Request) -> dict | None:
     return {"id": row["id"], "username": row["username"], "role": row["role"]} if row else None
 
 
+# 访客身份:未登录用户默认以访客(普通用户权限)访问,不强制登录。
+# 只读及普通用户操作放行;写操作/管理操作仍由各接口的本人校验或 require_admin 拦截。
+GUEST_USER = {"id": 0, "username": "访客", "role": "user", "is_guest": True}
+
+
 async def require_login(request: Request) -> dict:
-    """统一登录依赖：未登录抛 401。用法 user=Depends(require_login)。"""
+    """统一登录依赖:未登录返回访客(普通用户权限),不再强制弹窗。
+    需要管理员/写权限的接口用 require_admin 或自行校验 user['id']/is_guest。"""
     u = await _user_from_token(request)
-    if not u:
-        raise HTTPException(401, "未登录")
-    return u
+    return u if u else dict(GUEST_USER)
 
 
 async def require_admin(request: Request) -> dict:

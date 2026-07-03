@@ -30,15 +30,18 @@
                  :class="sessClass(s)"
                  @click.stop="openDetail(s)">
               <div class="sess-title">
-                <span v-if="isMega(s)" class="mega-badge" title="百万级PCU 顶流场次">🔥</span>
+                <span v-if="s.is_report" class="report-badge" title="重要直播活动报备场次">🛡</span>
+                <span v-else-if="isMega(s)" class="mega-badge" title="百万级PCU 顶流场次">🔥</span>
                 <span v-else-if="isVip(s)" class="vip-star" title="重点关注官号/高优">★</span>
-                <span v-if="s.pcu==null" class="sess-time">{{ hhmm(s.session_time) }}</span>{{ s.title }}<span v-if="isContFlow(s)" class="cont-flow-tag" title="长期持续流：标题为开流初始值，不代表当天实际内容">持续流</span>
+                <span v-if="s.pcu==null && showStartTime(s)" class="sess-time">{{ hhmm(s.session_time) }}</span>{{ s.title }}<span v-if="isContFlow(s) || isReportMulti(s)" class="cont-flow-tag" title="持续流/跨天报备：标题为初始值，不代表当天实际内容">持续流</span>
               </div>
               <div class="sess-metric">
                 <span v-if="s.anchor_name" class="anchor">{{ s.anchor_name }}</span>
+                <span v-if="s.report_info?.creator" class="anchor">报备人 {{ s.report_info.creator }}</span>
                 <span v-if="s.pcu!=null" class="peak-time">峰值 {{ hhmm(s.session_time) }}</span>
                 <span v-if="s.pcu!=null" class="pcu">PCU {{ fmt(s.pcu) }}</span>
                 <span v-if="s.reservation!=null" class="rsv">预约 {{ fmt(s.reservation) }}</span>
+                <span v-if="s.is_report" class="report-tag">已报备{{ s.report_info?.pcu_display ? '·预估PCU '+s.report_info.pcu_display : '' }}</span>
               </div>
             </div>
           </div>
@@ -76,14 +79,55 @@
     <el-drawer v-model="drawer" :title="detail?.title || '场次详情'" size="380px">
       <div v-if="detail" class="detail">
         <div v-if="isVip(detail)" class="vip-banner">★ 重点关注直播场次</div>
-        <div class="d-row"><span class="d-lbl">{{ detail.pcu!=null ? 'PCU峰值时间' : '开播时间' }}</span><span>{{ detail.session_time }}</span></div>
-        <div class="d-row"><span class="d-lbl">主播</span><span>{{ detail.anchor_name || '—' }}</span></div>
+        <div class="d-row" v-if="detail.pcu!=null || showStartTime(detail)"><span class="d-lbl">{{ detail.pcu!=null ? 'PCU 峰值' : '开播时间' }}</span><span>{{ detail.session_time }}</span></div>
+        <div class="d-row" v-if="detail.anchor_name"><span class="d-lbl">主播</span><span>{{ detail.anchor_name }}</span></div>
         <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">PCU</span><span>{{ fmt(detail.pcu) }}</span></div>
         <div class="d-row" v-if="detail.reservation!=null"><span class="d-lbl">预约数</span><span>{{ fmt(detail.reservation) }}</span></div>
-        <div class="d-row" v-if="detail.watch_hours!=null"><span class="d-lbl">累计观看时长</span><span>{{ Math.round(detail.watch_hours).toLocaleString() }} 小时</span></div>
-        <div class="d-row" v-if="detail.danmu_count!=null"><span class="d-lbl">累计弹幕数</span><span>{{ detail.danmu_count.toLocaleString() }}</span></div>
-        <div class="d-row" v-if="detail.fans_growth!=null"><span class="d-lbl">涨粉数</span><span>{{ fmt(detail.fans_growth) }}</span></div>
+        <div class="d-metric" v-if="hasDual(detail.watch_hours_fans, detail.watch_hours_all)">
+          <div class="m-title">累计观看时长</div>
+          <div class="m-sub"><span class="m-k">粉版 App</span><span class="m-v">{{ ksep(detail.watch_hours_fans) }}<i>小时</i></span></div>
+          <div class="m-sub"><span class="m-k">全端</span><span class="m-v">{{ ksep(detail.watch_hours_all) }}<i>小时</i></span></div>
+        </div>
+        <div class="d-metric" v-if="hasDual(detail.danmu_fans, detail.danmu_all)">
+          <div class="m-title">累计弹幕数</div>
+          <div class="m-sub"><span class="m-k">粉版 App</span><span class="m-v">{{ ksep(detail.danmu_fans) }}</span></div>
+          <div class="m-sub"><span class="m-k">全端</span><span class="m-v">{{ ksep(detail.danmu_all) }}</span></div>
+        </div>
+        <div class="d-metric" v-if="hasDual(detail.enter_dau_fans, detail.enter_dau_all)">
+          <div class="m-title">进房 DAU</div>
+          <div class="m-sub"><span class="m-k">粉版 App</span><span class="m-v">{{ ksep(detail.enter_dau_fans) }}</span></div>
+          <div class="m-sub"><span class="m-k">全端</span><span class="m-v">{{ ksep(detail.enter_dau_all) }}</span></div>
+        </div>
+        <div class="d-metric" v-if="hasDual(detail.fans_growth_fans, detail.fans_growth_all)">
+          <div class="m-title">涨粉数</div>
+          <div class="m-sub"><span class="m-k">粉版 App</span><span class="m-v">{{ ksep(detail.fans_growth_fans) }}</span></div>
+          <div class="m-sub"><span class="m-k">全端</span><span class="m-v">{{ ksep(detail.fans_growth_all) }}</span></div>
+        </div>
         <div class="d-row"><span class="d-lbl">直播间ID</span><span>{{ detail.room_id || '—' }}</span></div>
+
+        <!-- 报备信息区(重要直播活动报备):指标区之下 -->
+        <div v-if="detail.report_info" class="report-block">
+          <div class="rb-head">🛡 报备信息 <span class="rb-sub">重要直播活动报备</span></div>
+          <div class="d-row"><span class="d-lbl">活动名称</span><span>{{ detail.report_info.name || '—' }}</span></div>
+          <div class="d-row"><span class="d-lbl">报备时段</span><span>{{ detail.report_info.time_start }} ~ {{ detail.report_info.time_end }}</span></div>
+          <div class="d-row"><span class="d-lbl">预估 PCU</span><span>{{ detail.report_info.pcu_display || detail.report_info.pcu || '—' }}<i class="rb-note">（报备原值 {{ detail.report_info.pcu }}，单位「万」）</i></span></div>
+          <div class="d-row" v-if="detail.report_info.pcu_reason"><span class="d-lbl">预估依据</span><span class="rb-reason">{{ detail.report_info.pcu_reason }}</span></div>
+          <div class="d-row"><span class="d-lbl">直播间</span><span>{{ detail.report_info.room_id || '—' }}</span></div>
+          <div class="d-row" v-if="detail.report_info.live_type"><span class="d-lbl">直播类型</span><span>{{ detail.report_info.live_type }}</span></div>
+          <div class="d-row" v-if="detail.report_info.live_input_type"><span class="d-lbl">推拉流类型</span><span>{{ detail.report_info.live_input_type }}</span></div>
+          <div class="d-row" v-if="detail.report_info.room_bw"><span class="d-lbl">码率/帧率</span><span>{{ detail.report_info.room_bw }}<template v-if="detail.report_info.room_fps"> / {{ detail.report_info.room_fps }}fps</template></span></div>
+          <div class="d-row" v-if="detail.report_info.need_sungong"><span class="d-lbl">孙工团队</span><span>{{ detail.report_info.need_sungong }}</span></div>
+          <div class="d-row" v-if="detail.report_info.need_4k"><span class="d-lbl">4K</span><span>{{ detail.report_info.need_4k }}</span></div>
+          <div class="d-row" v-if="detail.report_info.need_hdr"><span class="d-lbl">HDR</span><span>{{ detail.report_info.need_hdr }}</span></div>
+          <div class="d-row" v-if="detail.report_info.real_origin"><span class="d-lbl">真原画露出</span><span>{{ detail.report_info.real_origin }}</span></div>
+          <div class="d-row" v-if="detail.report_info.default_origin"><span class="d-lbl">默认原画清晰度</span><span>{{ detail.report_info.default_origin }}</span></div>
+          <div class="d-row"><span class="d-lbl">报备人</span><span>{{ detail.report_info.creator || '—' }}</span></div>
+          <div class="d-row" v-if="isAdmin && detail.report_info.order_id">
+            <span class="d-lbl">审批单据</span>
+            <a class="rb-link" :href="SHENPI_URL + detail.report_info.order_id" target="_blank" rel="noopener">打开原单据校准 ↗</a>
+          </div>
+        </div>
+
         <el-button type="primary" :disabled="!detail.room_url" @click="enterRoom" style="margin-top:16px;width:100%">
           进直播间
         </el-button>
@@ -93,8 +137,13 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, inject } from 'vue'
 import axios from 'axios'
+
+const currentUser = inject('currentUser', null)
+const isAdmin = computed(() => currentUser?.value?.role === 'admin')
+// 审批单据链接(仅管理员可见,用于人工校准报备数据)
+const SHENPI_URL = ''
 
 const api = axios.create({ baseURL: '/api' })
 const weekNames = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
@@ -114,12 +163,23 @@ const dayTitle = computed(() => {
 
 const fmt = (n) => n == null ? '' : (n >= 10000 ? (n / 10000).toFixed(1) + 'w' : String(n))
 const hhmm = (t) => (t || '').slice(11, 16)   // 'YYYY-MM-DD HH:MM:SS' → 'HH:MM'
+// 千分位;空值显示 —。unit 追加单位(如 ' 小时')
+const ksep = (n, unit = '') => n == null ? '—' : Math.round(n).toLocaleString() + unit
+// 某维度是否有任一口径值(粉版或全端),决定该行是否显示
+const hasDual = (f, a) => f != null || a != null
 
 // 重点关注官号/高优Up白名单(主播名精确匹配)→ 特殊标识
 const VIP_ANCHORS = ['哔哩哔哩弹幕网', '哔哩哔哩直播', '影视飓风', '哔哩哔哩英雄联盟赛事', '哔哩哔哩晚会', '央视新闻']
 const isVip = (s) => VIP_ANCHORS.includes((s.anchor_name || '').trim())
 // 百万级 PCU 场次:最高优先级高亮(超过白名单官号)
 const isMega = (s) => s.pcu != null && s.pcu >= 1000000
+// 跨天报备:报备时段横跨多天,当天标"持续流"(与持续流逻辑一致)
+const isReportMulti = (s) => {
+  if (!s.is_report || !s.report_info) return false
+  const st = (s.report_info.time_start || '').slice(0, 10)
+  const et = (s.report_info.time_end || '').slice(0, 10)
+  return st && et && st !== et
+}
 // 持续流识别:同一直播间(room_id)+同一标题 在当前视图内跨>=3天出现,判为长期持续流——
 // 标题是开流时的初始值、不随每天实际内容(如S赛每日对阵)更新,提示用户勿把标题当当天内容。
 // (阈值取3天:2天多为跨夜直播或同标题巧合,3天以上才明显是长期挂流)
@@ -135,8 +195,38 @@ const contFlowKeys = computed(() => {
   return keys
 })
 const isContFlow = (s) => !!s.room_id && !!s.title && contFlowKeys.value.has(s.room_id + '||' + s.title)
+// 持续流/跨天场次的首日日期(用于"仅首日显示开播时间")
+const contFlowFirstDay = computed(() => {
+  const first = {}  // key → 最早日期
+  for (const s of sessions.value) {
+    if (!s.room_id || !s.title || s.pcu == null) continue
+    const k = s.room_id + '||' + s.title
+    const d = (s.session_time || '').slice(0, 10)
+    if (!first[k] || d < first[k]) first[k] = d
+  }
+  return first
+})
+// 是否显示开播时间:跨天的持续流/报备仅首日显示,后续天不显示(不是每天开播)
+function showStartTime(s) {
+  const day = (s.session_time || '').slice(0, 10)
+  // 跨天报备:仅首日(==report_info.time_start日)显示
+  if (s.is_report && s.report_info) {
+    const st = (s.report_info.time_start || '').slice(0, 10)
+    const et = (s.report_info.time_end || '').slice(0, 10)
+    if (st && et && st !== et) return day === st
+    return true
+  }
+  // 持续流:仅视图内最早那天显示
+  if (isContFlow(s)) {
+    return day === contFlowFirstDay.value[s.room_id + '||' + s.title]
+  }
+  return true
+}
 // 场次视觉分级 class:mega(百万PCU,最亮) > vip(白名单官号,次亮) > 普通
-const sessClass = (s) => [s.pcu != null ? 'past' : 'future', isMega(s) ? 'mega' : (isVip(s) ? 'vip' : '')]
+const sessClass = (s) => [
+  s.pcu != null ? 'past' : 'future',
+  (s.is_report || s.report_info) ? 'report' : (isMega(s) ? 'mega' : (isVip(s) ? 'vip' : '')),
+]
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 const isSameDay = (a, b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate()
 
@@ -164,6 +254,36 @@ const rangeLabel = computed(() => {
   return `${ymd(start)} ~ ${ymd(end)}`
 })
 
+const MIN_SHOW = 10000  // 展示门槛:过去PCU<1w、未来预约<1w 默认不展示(数据照常存,仅前端精简)
+
+// 组织某天要展示的场次:过滤低量 + 报备优先 + 同直播间合并(报备挂到指标/预约场次上)
+function buildDaySessions(key) {
+  const all = sessions.value.filter(s => (s.session_time || '').slice(0, 10) === key)
+  const reports = all.filter(s => s.is_report)
+  const normal = all.filter(s => !s.is_report)
+  // 合并:同 room_id 的报备信息挂到普通场次上;未被合并的报备单独成条
+  const usedReport = new Set()
+  const merged = normal.map(s => {
+    if (!s.report_info) {
+      const rep = reports.find(r => r.room_id && r.room_id === s.room_id && !usedReport.has(r.id))
+      if (rep) { usedReport.add(rep.id); return { ...s, report_info: rep.report_info, is_report: rep.is_report } }
+    }
+    return s
+  })
+  for (const r of reports) if (!usedReport.has(r.id)) merged.push(r)
+  // 过滤低量:过去PCU<1w 不展示;未来纯预约<1w 不展示;报备场次始终展示
+  const kept = merged.filter(s => {
+    if (s.is_report || s.report_info) return true
+    if (s.pcu != null) return s.pcu >= MIN_SHOW
+    if (s.reservation != null) return s.reservation >= MIN_SHOW
+    return true
+  })
+  // 排序:报备优先 → PCU降序 → 预约降序
+  const rank = (s) => (s.is_report || s.report_info) ? 3 : (s.pcu != null ? 2 : 1)
+  const metric = (s) => (s.pcu != null ? s.pcu : (s.reservation != null ? s.reservation : -1))
+  return kept.sort((a, b) => rank(b) - rank(a) || metric(b) - metric(a) || (a.session_time || '').localeCompare(b.session_time || ''))
+}
+
 const cells = computed(() => {
   const { start, end } = viewRange()
   const today = new Date()
@@ -179,10 +299,7 @@ const cells = computed(() => {
       d.setDate(d.getDate() + 1)
       continue
     }
-    // 排序：有PCU的(过去/已开播)按PCU降序；纯预约的(未来)按预约量降序
-    const metric = (s) => (s.pcu != null ? s.pcu : (s.reservation != null ? s.reservation : -1))
-    const daySess = sessions.value.filter(s => (s.session_time || '').slice(0,10) === key)
-                                  .sort((a,b)=> metric(b) - metric(a) || (a.session_time||'').localeCompare(b.session_time||''))
+    const daySess = buildDaySessions(key)
     out.push({
       day: d.getDate(),
       date: key,
@@ -249,12 +366,18 @@ onMounted(load)
 
 .sess-metric .peak-time { color:#2f6bd6; font-weight:600; }
 .sess-metric .pcu { color: #b3701a; font-weight: 600; }
-.sess-metric .rsv { color: #2f9e5e; font-weight: 600; }
+.sess-metric .rsv { color: #2f9e5e; font-weight: 700; font-size: 14px; }
 /* 白名单官号(次级高优):淡化处理——明显高于普通、但低于百万级mega */
 .sess.vip { border-left:4px solid #f0a852 !important; background:linear-gradient(135deg,#fff8ec,#fff1d8) !important; box-shadow:0 0 0 1px #f3c98a inset; }
 .sess.vip .sess-title { font-size:13px; font-weight:600; color:#b5722a; }
 .sess.vip .anchor { color:#c07a28 !important; font-weight:600; }
 .sess.vip .pcu, .sess.vip .rsv { font-weight:600; }
+/* 报备场次:蓝底突出(优先级最高的视觉强调) */
+.sess.report { border-left:4px solid #2f6bd6 !important; background:linear-gradient(135deg,#eaf2ff,#d6e6ff) !important; box-shadow:0 0 0 1px #a8c6f0 inset; }
+.sess.report .sess-title { font-weight:700; color:#1e4fa3; }
+.sess.report .anchor { color:#2f6bd6 !important; font-weight:600; }
+.sess.report .report-badge { font-size:14px; }
+.sess-metric .report-tag { color:#fff; background:#2f6bd6; border:none; border-radius:3px; padding:1px 6px; font-size:11px; font-weight:600; }
 .vip-star { color:#e8952f; font-weight:900; font-size:14px; margin-right:3px; }
 /* 百万级PCU(最高优先):最强高亮——红金渐变+发光边框+加粗放大 */
 .sess.mega { border-left:5px solid #e01f1f !important; background:linear-gradient(135deg,#ffe08a,#ff9d5c,#ff6b6b) !important; box-shadow:0 0 0 2px #ff3b3b inset, 0 0 12px rgba(255,60,60,.55); }
@@ -287,5 +410,24 @@ onMounted(load)
 .dd-chip.room-link { cursor: pointer; text-decoration: none; transition: all .15s; }
 .dd-chip.room-link:hover { background: #e0edff; color: #2f6bd6; }
 .detail .d-row { display: flex; padding: 8px 0; border-bottom: 1px solid #f0f2f5; font-size: 14px; }
-.detail .d-lbl { width: 80px; color: #909399; }
+.detail .d-lbl { width: 80px; color: #909399; flex-shrink: 0; }
+.detail .d-dual { flex: 1; text-align: right; color: #303133; }
+/* 双口径指标:标题行 + 粉版/全端两条明细,数值紧跟标签 */
+.detail .d-metric { padding: 8px 0; border-bottom: 1px solid #f0f2f5; }
+.detail .m-title { font-size: 14px; color: #909399; margin-bottom: 4px; }
+.detail .m-sub { display: flex; align-items: baseline; padding: 2px 0; font-size: 14px; }
+.detail .m-k { color: #909399; width: 80px; flex-shrink: 0; }
+.detail .m-v { color: #303133; font-weight: 600; font-variant-numeric: tabular-nums; }
+.detail .m-v i { font-style: normal; font-weight: 400; color: #c0c4cc; font-size: 12px; margin-left: 3px; }
+/* 报备标记(格子内) */
+.report-badge { margin-right: 2px; }
+/* 报备信息区(详情弹窗) */
+.detail .report-block { margin-top: 14px; padding: 10px 12px; background: #fffbf0; border: 1px solid #ffe7ba; border-radius: 6px; }
+.detail .rb-head { font-size: 14px; font-weight: 600; color: #d48806; margin-bottom: 8px; }
+.detail .rb-head .rb-sub { font-size: 12px; font-weight: 400; color: #b8935a; margin-left: 4px; }
+.detail .rb-note { font-style: normal; color: #c0c4cc; font-size: 12px; margin-left: 4px; }
+.detail .rb-reason { text-align: left; color: #606266; font-size: 13px; line-height: 1.5; }
+.detail .rb-link { color: #2f6bd6; text-decoration: none; font-weight: 600; }
+.detail .rb-link:hover { text-decoration: underline; }
+.detail .report-block .d-row { border-bottom: 1px solid #f7ecd6; }
 </style>

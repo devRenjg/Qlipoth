@@ -1,7 +1,7 @@
 # auth-and-permissions Specification
 
 ## Purpose
-提供用户名+密码的注册/登录体系，以 PBKDF2 哈希存储密码、Cookie Token 自动登录，并以三级角色（admin/super/user）控制功能与数据可见范围，未登录不可使用系统。
+提供用户名+密码的注册/登录体系，以 PBKDF2 哈希存储密码、Cookie Token 自动登录，并以三级角色（admin/super/user）控制功能与数据可见范围。未登录用户以「访客」身份（等同普通用户只读权限）浏览只读内容，写操作与管理操作仍需真登录并服务端鉴权。
 
 ## Requirements
 
@@ -40,7 +40,7 @@
 
 ### Requirement: Cookie Token 自动登录
 
-系统 SHALL 以 HttpOnly Cookie 承载 Token，有效期 7 天，凭 Token 可自动识别当前用户。登出 SHALL 失效该 Token 并清除 Cookie。
+系统 SHALL 以 HttpOnly Cookie 承载 Token，登录后有效期 1 年（长期保持、不重复弹窗），凭 Token 可自动识别当前用户。登出 SHALL 失效该 Token 并清除 Cookie。
 
 #### Scenario: 凭 Cookie 识别当前用户
 
@@ -98,13 +98,25 @@
 - **WHEN** 管理员在用户管理界面查看某用户的行为日志
 - **THEN** 展示该用户各功能使用次数统计与时间倒序的行为明细；非 admin 调用该接口返回 403
 
+### Requirement: 访客只读访问
+
+系统 SHALL 允许未登录用户以「访客」身份访问只读内容，不强制弹窗登录。`require_login` 依赖对未登录请求 SHALL 返回访客身份对象（`role=user`、`is_guest=True`）而非抛 401。访客权限 SHALL 等同普通用户只读：可用智能问答、查看直播日历、作战地图、保障清单列表/详情/进度；SHALL NOT 执行任何写操作或管理操作。前端 SHALL 默认不弹登录页、允许"以访客身份浏览"，并提供登录入口；导航可见项按有效角色（访客视为 `user`）控制。
+
+#### Scenario: 访客浏览只读内容
+- **WHEN** 未登录用户访问问答、直播日历、作战地图查看、清单列表/详情等只读接口
+- **THEN** 系统以访客身份放行并返回数据，不强制登录
+
+#### Scenario: 访客尝试写操作被拒
+- **WHEN** 访客调用清单生成/勾选/导出、作战地图反馈点赞等写接口
+- **THEN** 系统据 `is_guest` 返回 401，要求先登录
+
 ### Requirement: 服务端统一鉴权（不得依赖前端作为安全边界）
 
-所有业务接口 SHALL 在服务端校验身份，未登录 401、越权 403。前端菜单隐藏 SHALL NOT 作为安全边界。系统提供统一依赖 require_login/require_admin，认证入口放行，其余默认要求登录；Settings 等敏感写接口仅 admin。
+所有业务接口 SHALL 在服务端校验身份。只读接口对访客放行；写操作与管理操作 SHALL 校验真实登录身份——访客/未登录写操作 401、越权 403。前端菜单隐藏 SHALL NOT 作为安全边界。系统提供统一依赖：`require_login`（未登录返回访客只读身份）、写操作专用依赖（如清单 `_require_login`、作战地图挡 `is_guest`）对访客抛 401、`require_admin` 仅 admin；Settings 等敏感写接口仅 admin。
 
-#### Scenario: 匿名访问业务接口被拒
-- **WHEN** 未登录请求文档/聊天/作战地图/设置等接口
-- **THEN** 返回 401，不泄露数据、不允许写操作
+#### Scenario: 匿名写/管理操作被拒
+- **WHEN** 未登录或访客请求文档导入删除、设置、用户管理、清单写操作等接口
+- **THEN** 返回 401（越权 403），不允许写操作、不泄露越权数据
 
 ### Requirement: 用户数据隔离
 

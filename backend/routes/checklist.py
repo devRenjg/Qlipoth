@@ -227,7 +227,7 @@ def _all_docs_sql():
 
 
 async def _require_login(request: Request) -> dict:
-    """保障清单对所有登录用户开放（均可查看与生成）。返回当前用户 {id, username, role}。"""
+    """写操作用:必须真登录(访客/未登录抛401)。返回 {id, username, role}。"""
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         raise HTTPException(401, "未登录")
@@ -238,6 +238,20 @@ async def _require_login(request: Request) -> dict:
         if not row:
             raise HTTPException(401, "登录已失效")
         return {"id": row["id"], "username": row["username"], "role": row["role"]}
+
+
+async def _optional_login(request: Request) -> dict:
+    """只读查看用:登录返回真实用户,未登录返回访客(普通用户权限)。
+    保障清单查看(列表/详情/进度)对所有人开放,访客也能看别人生成的清单。"""
+    token = request.cookies.get(COOKIE_NAME)
+    if token:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT id, username, role FROM users WHERE token = ?", (token,))
+            row = await cur.fetchone()
+            if row:
+                return {"id": row["id"], "username": row["username"], "role": row["role"]}
+    return {"id": 0, "username": "访客", "role": "user", "is_guest": True}
 
 
 async def _require_checklist_owner(checklist_id: int, request: Request) -> dict:
@@ -445,7 +459,7 @@ async def generate_checklist(req: GenerateReq, request: Request):
 
 @router.get("/checklist/generate/{checklist_id}/progress")
 async def generate_progress(checklist_id: int, request: Request):
-    await _require_login(request)
+    await _optional_login(request)
     prog = _GEN_PROGRESS.get(checklist_id)
     if not prog:
         # 进程重启后内存丢失：看库里状态
@@ -461,7 +475,7 @@ async def generate_progress(checklist_id: int, request: Request):
 
 @router.get("/checklist/list")
 async def list_checklists(request: Request):
-    await _require_login(request)
+    await _optional_login(request)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
@@ -474,7 +488,7 @@ async def list_checklists(request: Request):
 
 @router.get("/checklist/{checklist_id}")
 async def get_checklist(checklist_id: int, request: Request):
-    await _require_login(request)
+    await _optional_login(request)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT * FROM checklists WHERE id = ?", (checklist_id,))

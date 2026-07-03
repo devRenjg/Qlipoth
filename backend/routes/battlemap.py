@@ -200,15 +200,15 @@ async def _require_admin(request: Request) -> dict:
 
 
 async def _require_login(request: Request) -> dict:
+    """只读查看用:登录返回真实用户,未登录返回访客。作战地图对所有人开放查看。"""
     token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        raise HTTPException(401, "未登录")
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        row = await (await db.execute("SELECT username FROM users WHERE token = ?", (token,))).fetchone()
-    if not row:
-        raise HTTPException(401, "登录已失效")
-    return {"username": row["username"]}
+    if token:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            row = await (await db.execute("SELECT username FROM users WHERE token = ?", (token,))).fetchone()
+        if row:
+            return {"username": row["username"]}
+    return {"username": "访客", "is_guest": True}
 
 
 def item_hash(text: str) -> str:
@@ -286,6 +286,8 @@ async def battlemap_progress(user: dict = Depends(_require_login)):
 async def battlemap_feedback(request: Request):
     """对作战地图某条目点赞/疑问。同一用户对同一条目再次点同类型=取消，点另一类型=切换。"""
     me = await _require_login(request)
+    if me.get("is_guest"):
+        raise HTTPException(401, "请登录后再反馈")
     body = await request.json()
     dim = (body.get("dimension") or "").strip()
     text = (body.get("item_text") or "").strip()
