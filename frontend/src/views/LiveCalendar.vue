@@ -80,6 +80,9 @@
         <div class="d-row"><span class="d-lbl">主播</span><span>{{ detail.anchor_name || '—' }}</span></div>
         <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">PCU</span><span>{{ fmt(detail.pcu) }}</span></div>
         <div class="d-row" v-if="detail.reservation!=null"><span class="d-lbl">预约数</span><span>{{ fmt(detail.reservation) }}</span></div>
+        <div class="d-row" v-if="detail.watch_hours!=null"><span class="d-lbl">累计观看时长</span><span>{{ Math.round(detail.watch_hours).toLocaleString() }} 小时</span></div>
+        <div class="d-row" v-if="detail.danmu_count!=null"><span class="d-lbl">累计弹幕数</span><span>{{ detail.danmu_count.toLocaleString() }}</span></div>
+        <div class="d-row" v-if="detail.fans_growth!=null"><span class="d-lbl">涨粉数</span><span>{{ fmt(detail.fans_growth) }}</span></div>
         <div class="d-row"><span class="d-lbl">直播间ID</span><span>{{ detail.room_id || '—' }}</span></div>
         <el-button type="primary" :disabled="!detail.room_url" @click="enterRoom" style="margin-top:16px;width:100%">
           进直播间

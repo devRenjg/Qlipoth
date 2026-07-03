@@ -22,7 +22,8 @@ async def list_sessions(start: str, end: str, user: dict = Depends(require_login
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         rows = await (await db.execute(
-            "SELECT id, session_time, title, anchor_name, pcu, reservation, room_id "
+            "SELECT id, session_time, title, anchor_name, pcu, reservation, room_id, "
+            "watch_hours, danmu_count, fans_growth "
             "FROM live_sessions WHERE session_time >= ? AND session_time <= ? "
             "ORDER BY session_time ASC",
             (start, end + " 23:59:59" if len(end) == 10 else end),
@@ -37,6 +38,9 @@ async def list_sessions(start: str, end: str, user: dict = Depends(require_login
             "reservation": r["reservation"],
             "room_id": r["room_id"] or "",
             "room_url": _room_url(r["room_id"] or ""),
+            "watch_hours": r["watch_hours"],
+            "danmu_count": r["danmu_count"],
+            "fans_growth": r["fans_growth"],
         }
         for r in rows
     ]
