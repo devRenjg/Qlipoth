@@ -135,7 +135,7 @@
           <div class="d-row" v-if="detail.report_info.real_origin"><span class="d-lbl">真原画露出</span><span>{{ detail.report_info.real_origin }}</span></div>
           <div class="d-row" v-if="detail.report_info.default_origin"><span class="d-lbl">默认原画清晰度</span><span>{{ detail.report_info.default_origin }}</span></div>
           <div class="d-row"><span class="d-lbl">报备人</span><span>{{ detail.report_info.creator || '—' }}</span></div>
-          <div class="d-row" v-if="isAdmin && detail.report_info.order_id">
+          <div class="d-row" v-if="isAdmin && detail.report_info.order_id && SHENPI_URL">
             <span class="d-lbl">审批单据</span>
             <a class="rb-link" :href="SHENPI_URL + detail.report_info.order_id" target="_blank" rel="noopener">打开原单据校准 ↗</a>
           </div>
@@ -155,8 +155,9 @@ import axios from 'axios'
 
 const currentUser = inject('currentUser', null)
 const isAdmin = computed(() => currentUser?.value?.role === 'admin')
-// 审批单据链接(仅管理员可见,用于人工校准报备数据)
-const SHENPI_URL = ''
+// 审批单据链接(仅管理员可见,用于人工校准报备数据)。
+// 内部域名走环境变量脱敏,公开仓库不含真实地址;本地 .env.local 配 VITE_SHENPI_URL 即可。
+const SHENPI_URL = import.meta.env.VITE_SHENPI_URL || ''
 
 const api = axios.create({ baseURL: '/api' })
 const weekNames = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']

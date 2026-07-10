@@ -59,3 +59,9 @@ backend/eval_full103.py
 backend/eval_new_vs_old.py
 backend/assign_owners.py
 backend/.env
+
+# 评测集真值(含核心业务数值 PCU/观看时长/DAU 等，本地保留不公开)
+backend/eval/*_truth.local.json
+# 前端本地环境变量(含内部域名等，不公开)
+frontend/.env.local
+frontend/.env.*.local

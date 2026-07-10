@@ -32,8 +32,20 @@ if sys.platform == "win32":
 from livecal_qa import detect_livecal_intent, fetch_livecal_context  # noqa: E402
 
 GOLDEN_PATH = Path(__file__).parent / "golden_livecal.json"
+# 真实业务数值(PCU/观看时长/DAU等)脱敏,不入公开仓库,存本地此文件(gitignore)。
+# has_truth=true 的题从这里读 expected_contains 做数值校验。
+TRUTH_PATH = Path(__file__).parent / "golden_livecal_truth.local.json"
 REPORTS_DIR = Path(__file__).parent / "reports"
 _BJ = timezone(timedelta(hours=8))
+
+
+def _load_truth() -> dict:
+    """加载本地真值。缺失则数值校验降级跳过(仅跑路由校验),不报错。"""
+    if not TRUTH_PATH.exists():
+        print(f"⚠️  未找到本地真值文件 {TRUTH_PATH.name},数值校验将跳过(仅评路由)。\n"
+              f"   该文件含核心业务数值、按约定不入git,请从安全渠道获取。\n")
+        return {}
+    return json.loads(TRUTH_PATH.read_text(encoding="utf-8")).get("truth", {})
 
 
 async def decide_source(q: str):
@@ -49,6 +61,7 @@ async def decide_source(q: str):
 async def run():
     data = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
     cases = data["cases"]
+    truth = _load_truth()
     rows = []
     route_ok = 0
     val_ok = 0
@@ -61,7 +74,8 @@ async def run():
         route_ok += r_hit
 
         v_hit = None
-        contains = c.get("expected_contains") or []
+        # 数值答案从本地真值文件按 id 取(公开集不含);无真值文件时 contains 为空,跳过数值校验
+        contains = truth.get(str(c["id"]), []) if c.get("has_truth") else []
         if exp_src == "live_calendar" and contains:
             val_total += 1
             text = ctx or ""
