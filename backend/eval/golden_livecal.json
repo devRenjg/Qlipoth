@@ -1,0 +1,146 @@
+{
+  "_meta": {
+    "purpose": "直播日历数据类问答评测集。与知识库文档检索评测(golden_set.json)并列、互不干扰。",
+    "eval": "校验两点:①路由准确率(expected_source该走live_calendar/knowledge_base是否命中);②数值准确率(答案是否包含真实数值任一)。",
+    "desensitized": "公开仓库脱敏:真实业务数值(PCU/观看时长/DAU等)不入库,存于本地 golden_livecal_truth.local.json(gitignore)。has_truth=true 的题由评测脚本从本地真值文件读取答案做校验。",
+    "created": "2026-07-10"
+  },
+  "cases": [
+    {
+      "id": 1,
+      "question": "S14决赛的PCU峰值是多少",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "2024-11-02 总决赛 BLG vs T1,官方英雄联盟赛事间"
+    },
+    {
+      "id": 2,
+      "question": "S11决赛PCU多少",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "2021-11-06 总决赛 EDG vs DK"
+    },
+    {
+      "id": 3,
+      "question": "S13全球总决赛的在线峰值",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "2023-11-19 决赛 WBG vs T1"
+    },
+    {
+      "id": 4,
+      "question": "S15决赛T1那场PCU是多少",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "2025-11-09 决赛 KT vs T1,修复数字队名bug后可查"
+    },
+    {
+      "id": 5,
+      "question": "93阅兵那场直播PCU多少",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "2025-09-03 纪念抗战80周年文艺晚会,央视新闻"
+    },
+    {
+      "id": 6,
+      "question": "2025年春晚的PCU峰值",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "2025-01-28 春节联欢晚会"
+    },
+    {
+      "id": 7,
+      "question": "2026春晚直播间在线峰值是多少",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "2026-02-16 春晚"
+    },
+    {
+      "id": 8,
+      "question": "2020年跨年晚会的PCU",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "2020-12-31 跨年晚会"
+    },
+    {
+      "id": 9,
+      "question": "2022年原神新版本前瞻直播的热度多少",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "2022-08-13 原神新版本前瞻特别节目"
+    },
+    {
+      "id": 10,
+      "question": "S14决赛那天是几号",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "场次时间类"
+    },
+    {
+      "id": 11,
+      "question": "2025年春晚是哪天直播的",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "场次时间类"
+    },
+    {
+      "id": 12,
+      "question": "S14决赛的观看时长有多少",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "高热业务数据:全端观看时长"
+    },
+    {
+      "id": 13,
+      "question": "2025春晚的进房DAU是多少",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "高热业务数据:全端进房DAU"
+    },
+    {
+      "id": 14,
+      "question": "S13决赛涨粉多少",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "高热业务数据:全端涨粉"
+    },
+    {
+      "id": 15,
+      "question": "93阅兵那场的弹幕数量",
+      "expected_source": "live_calendar",
+      "has_truth": true,
+      "note": "高热业务数据:全端弹幕"
+    },
+    {
+      "id": 16,
+      "question": "S17决赛的PCU是多少",
+      "expected_source": "knowledge_base",
+      "has_truth": true,
+      "note": "边界·回退:S17尚未举办,日历无数据→回退知识库,AI应如实说无"
+    },
+    {
+      "id": 17,
+      "question": "春晚保障有哪些注意事项",
+      "expected_source": "knowledge_base",
+      "note": "边界·不劫持:问方案/注意事项而非数据,应走知识库"
+    },
+    {
+      "id": 18,
+      "question": "弹幕审核的技术方案是什么",
+      "expected_source": "knowledge_base",
+      "note": "边界·不劫持:纯知识库问题,不含日历意图"
+    },
+    {
+      "id": 19,
+      "question": "红包系统是谁负责的",
+      "expected_source": "knowledge_base",
+      "note": "边界·不劫持:负责人类问题,走知识库"
+    },
+    {
+      "id": 20,
+      "question": "CNY春晚的带宽是怎么保障的",
+      "expected_source": "knowledge_base",
+      "note": "边界·不劫持:虽含春晚但问的是带宽保障方案,应走知识库(问方案≠问数据)"
+    }
+  ]
+}

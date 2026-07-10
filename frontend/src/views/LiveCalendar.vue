@@ -9,10 +9,15 @@
           <el-radio-button label="week">周视图</el-radio-button>
         </el-radio-group>
         <div class="nav">
-          <el-button size="small" @click="shift(-1)">‹ 上{{ viewMode==='month'?'月':'周' }}</el-button>
-          <span class="cur-label">{{ rangeLabel }}</span>
-          <el-button size="small" @click="shift(1)">下{{ viewMode==='month'?'月':'周' }} ›</el-button>
-          <el-button size="small" @click="goToday">今天</el-button>
+          <div class="nav-row nav-row-bottom">
+            <el-select v-model="selectedYear" size="small" class="year-select"
+                       placeholder="跳转年份" aria-label="选择年份快速跳转">
+              <el-option v-for="y in yearOptions" :key="y" :label="y + ' 年'" :value="y" />
+            </el-select>
+            <el-button size="small" :disabled="!canGoPrev" @click="shift(-1)">‹ 上{{ viewMode==='month'?'月':'周' }}</el-button>
+            <span class="cur-label">{{ rangeLabel }}</span>
+            <el-button size="small" :disabled="!canGoNext" @click="shift(1)">下{{ viewMode==='month'?'月':'周' }} ›</el-button>
+          </div>
         </div>
       </div>
     </div>
@@ -30,7 +35,8 @@
                  :class="sessClass(s)"
                  @click.stop="openDetail(s)">
               <div class="sess-title">
-                <span v-if="s.is_report" class="report-badge" title="重要直播活动报备场次">🛡</span>
+                <span v-if="isDirty(s)" class="dirty-badge" title="脏数据:PCU疑似口径异常,不代表真实观看">⚠️</span>
+                <span v-else-if="s.is_report" class="report-badge" title="重要直播活动报备场次">🛡</span>
                 <span v-else-if="isMega(s)" class="mega-badge" title="百万级PCU 顶流场次">🔥</span>
                 <span v-else-if="isVip(s)" class="vip-star" title="重点关注官号/高优">★</span>
                 <span v-if="s.pcu==null && showStartTime(s)" class="sess-time">{{ hhmm(s.session_time) }}</span>{{ s.title }}<span v-if="isContFlow(s) || isReportMulti(s)" class="cont-flow-tag" title="持续流/跨天报备：标题为初始值，不代表当天实际内容">持续流</span>
@@ -38,8 +44,9 @@
               <div class="sess-metric">
                 <span v-if="s.anchor_name" class="anchor">{{ s.anchor_name }}</span>
                 <span v-if="s.report_info?.creator" class="anchor">报备人 {{ s.report_info.creator }}</span>
-                <span v-if="s.pcu!=null" class="peak-time">峰值 {{ hhmm(s.session_time) }}</span>
-                <span v-if="s.pcu!=null" class="pcu">PCU {{ fmt(s.pcu) }}</span>
+                <span v-if="s.pcu!=null && hasPeakTime(s)" class="peak-time">峰值 {{ hhmm(s.session_time) }}</span>
+                <span v-if="s.pcu!=null" class="pcu" :class="{ 'pcu-dirty': isDirty(s) }">PCU {{ fmt(s.pcu) }}</span>
+                <span v-if="isDirty(s)" class="dirty-tag" title="PCU疑似口径异常">⚠️脏数据</span>
                 <span v-if="s.reservation!=null" class="rsv">预约 {{ fmt(s.reservation) }}</span>
                 <span v-if="s.is_report" class="report-tag">已报备{{ s.report_info?.pcu_display ? '·预估PCU '+s.report_info.pcu_display : '' }}</span>
               </div>
@@ -56,17 +63,19 @@
         <div v-for="s in dayCell.sessions" :key="s.id" class="dd-sess"
              :class="sessClass(s)">
           <div class="dd-top">
-            <span v-if="isMega(s)" class="mega-badge" title="百万级PCU 顶流场次">🔥</span>
+            <span v-if="isDirty(s)" class="dirty-badge" title="脏数据:PCU疑似口径异常">⚠️</span>
+            <span v-else-if="isMega(s)" class="mega-badge" title="百万级PCU 顶流场次">🔥</span>
             <span v-else-if="isVip(s)" class="vip-star">★</span>
             <span class="dd-title">{{ s.title }}</span>
             <span v-if="isContFlow(s)" class="cont-flow-tag">持续流</span>
           </div>
+          <div v-if="isDirty(s)" class="dd-dirty-hint">⚠️ 本场 PCU 为脏数据，疑似口径异常，不代表真实观看。{{ s.dirty_note }}</div>
           <div v-if="isContFlow(s)" class="cont-flow-hint">⚠️ 该直播间为长期持续流，此标题是开流时的初始标题，多天不变，不代表当天实际直播内容（如赛事每日对阵需另查赛程）。</div>
           <div class="dd-rows">
             <span v-if="s.anchor_name" class="dd-chip anchor">{{ s.anchor_name }}</span>
-            <span v-if="s.pcu!=null" class="dd-chip time">峰值 {{ hhmm(s.session_time) }}</span>
-            <span v-else class="dd-chip time">开播 {{ hhmm(s.session_time) }}</span>
-            <span v-if="s.pcu!=null" class="dd-chip pcu">PCU {{ fmt(s.pcu) }}</span>
+            <span v-if="s.pcu!=null && hasPeakTime(s)" class="dd-chip time">峰值 {{ hhmm(s.session_time) }}</span>
+            <span v-else-if="s.pcu==null" class="dd-chip time">开播 {{ hhmm(s.session_time) }}</span>
+            <span v-if="s.pcu!=null" class="dd-chip pcu" :class="{ 'pcu-dirty': isDirty(s) }">PCU {{ fmt(s.pcu) }}</span>
             <span v-if="s.reservation!=null" class="dd-chip rsv">预约 {{ fmt(s.reservation) }}</span>
             <a v-if="s.room_id && s.room_url" class="dd-chip room room-link" :href="s.room_url" target="_blank" rel="noopener" @click.stop>房间 {{ s.room_id }} ↗</a>
             <span v-else-if="s.room_id" class="dd-chip room">房间 {{ s.room_id }}</span>
@@ -78,10 +87,14 @@
     <!-- 单场详情抽屉 -->
     <el-drawer v-model="drawer" :title="detail?.title || '场次详情'" size="380px">
       <div v-if="detail" class="detail">
-        <div v-if="isVip(detail)" class="vip-banner">★ 重点关注直播场次</div>
-        <div class="d-row" v-if="detail.pcu!=null || showStartTime(detail)"><span class="d-lbl">{{ detail.pcu!=null ? 'PCU 峰值' : '开播时间' }}</span><span>{{ detail.session_time }}</span></div>
+        <div v-if="isDirty(detail)" class="dirty-banner">
+          <div class="db-head">⚠️ 本场 PCU 为脏数据，不代表真实观看</div>
+          <div class="db-note">{{ detail.dirty_note || 'PCU 疑似口径异常，数据保留原值但仅供参考，请勿据此判断真实热度。' }}</div>
+        </div>
+        <div v-else-if="isVip(detail)" class="vip-banner">★ 重点关注直播场次</div>
+        <div class="d-row" v-if="(detail.pcu!=null && hasPeakTime(detail)) || (detail.pcu==null && showStartTime(detail))"><span class="d-lbl">{{ detail.pcu!=null ? 'PCU 峰值' : '开播时间' }}</span><span>{{ detail.session_time }}</span></div>
         <div class="d-row" v-if="detail.anchor_name"><span class="d-lbl">主播</span><span>{{ detail.anchor_name }}</span></div>
-        <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">PCU</span><span>{{ fmt(detail.pcu) }}</span></div>
+        <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">PCU</span><span :class="{ 'v-dirty': isDirty(detail) }">{{ fmt(detail.pcu) }}<i v-if="isDirty(detail)" class="v-dirty-note">（脏数据，疑似口径异常）</i></span></div>
         <div class="d-row" v-if="detail.reservation!=null"><span class="d-lbl">预约数</span><span>{{ fmt(detail.reservation) }}</span></div>
         <div class="d-metric" v-if="hasDual(detail.watch_hours_fans, detail.watch_hours_all)">
           <div class="m-title">累计观看时长</div>
@@ -163,16 +176,26 @@ const dayTitle = computed(() => {
 
 const fmt = (n) => n == null ? '' : (n >= 10000 ? (n / 10000).toFixed(1) + 'w' : String(n))
 const hhmm = (t) => (t || '').slice(11, 16)   // 'YYYY-MM-DD HH:MM:SS' → 'HH:MM'
+// 是否有真实的 PCU 峰值时刻:2024-05-01 前用场次日表 danmu_num 作 PCU,该表无峰值时刻,
+// 时间统一兜底成 00:00:00(占位假值)。此类场次不展示峰值时间,避免"峰值 00:00"误导。
+// 判据:session_time 存在且时分秒非 00:00:00。
+const hasPeakTime = (s) => {
+  const hms = (s.session_time || '').slice(11, 19)
+  return !!hms && hms !== '00:00:00'
+}
 // 千分位;空值显示 —。unit 追加单位(如 ' 小时')
 const ksep = (n, unit = '') => n == null ? '—' : Math.round(n).toLocaleString() + unit
 // 某维度是否有任一口径值(粉版或全端),决定该行是否显示
 const hasDual = (f, a) => f != null || a != null
 
+// 脏数据:后端标记的口径异常场次(PCU值保留不洗,仅前端显著标记提示)。
+// 优先级最高——脏数据一律走告警样式,压过 mega/vip 所有高亮,避免脏值被当顶流误导。
+const isDirty = (s) => !!(s.is_dirty)
 // 重点关注官号/高优Up白名单(主播名精确匹配)→ 特殊标识
 const VIP_ANCHORS = ['哔哩哔哩弹幕网', '哔哩哔哩直播', '影视飓风', '哔哩哔哩英雄联盟赛事', '哔哩哔哩晚会', '央视新闻']
-const isVip = (s) => VIP_ANCHORS.includes((s.anchor_name || '').trim())
-// 百万级 PCU 场次:最高优先级高亮(超过白名单官号)
-const isMega = (s) => s.pcu != null && s.pcu >= 1000000
+const isVip = (s) => !isDirty(s) && VIP_ANCHORS.includes((s.anchor_name || '').trim())
+// 百万级 PCU 场次:最高优先级高亮(超过白名单官号)。脏数据不参与(否则脏的56万会被当顶流)
+const isMega = (s) => !isDirty(s) && s.pcu != null && s.pcu >= 1000000
 // 跨天报备:报备时段横跨多天,当天标"持续流"(与持续流逻辑一致)
 const isReportMulti = (s) => {
   if (!s.is_report || !s.report_info) return false
@@ -222,10 +245,10 @@ function showStartTime(s) {
   }
   return true
 }
-// 场次视觉分级 class:mega(百万PCU,最亮) > vip(白名单官号,次亮) > 普通
+// 场次视觉分级 class:dirty(脏数据,告警灰底,最高优先) > mega(百万PCU) > vip(白名单官号) > 普通
 const sessClass = (s) => [
   s.pcu != null ? 'past' : 'future',
-  (s.is_report || s.report_info) ? 'report' : (isMega(s) ? 'mega' : (isVip(s) ? 'vip' : '')),
+  isDirty(s) ? 'dirty' : ((s.is_report || s.report_info) ? 'report' : (isMega(s) ? 'mega' : (isVip(s) ? 'vip' : ''))),
 ]
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 const isSameDay = (a, b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate()
@@ -254,6 +277,33 @@ const rangeLabel = computed(() => {
   return `${ymd(start)} ~ ${ymd(end)}`
 })
 
+// 数据下界:最早可信数据 2020-09(2020-08及更早无有效数据、不会再补),再往前不允许翻页/跳转
+const DATA_FLOOR = new Date(2020, 8, 1)   // 2020-09-01(月份从0计,8=9月)
+// 数据上界:当前日期的下个月(未来仅约7天预约,翻到下月足够;再往后无内容)。取下月1号所在月。
+const _now = new Date()
+const DATA_CEIL = new Date(_now.getFullYear(), _now.getMonth() + 1, 1)   // 下个月1号
+// 年份快速跳转:范围覆盖已有数据(2020 起)至当前年+1(容纳未来预约场次)
+const DATA_START_YEAR = 2020
+const yearOptions = computed(() => {
+  const end = new Date().getFullYear() + 1
+  const out = []
+  for (let y = end; y >= DATA_START_YEAR; y--) out.push(y)
+  return out
+})
+// 可写计算属性:读取=当前锚点年份;写入=保持当前月/日、仅切换年份跳转
+const selectedYear = computed({
+  get: () => anchor.value.getFullYear(),
+  set: (y) => {
+    if (y == null || y === anchor.value.getFullYear()) return
+    const a = new Date(anchor.value)
+    a.setFullYear(y)   // 保留当前所选月份与日期,仅改年份
+    // 越界钳制:早于下界→2020-09;晚于上界(下个月)→钳到下月
+    if (a < DATA_FLOOR) { anchor.value = new Date(DATA_FLOOR); return }
+    if (a > DATA_CEIL) { anchor.value = new Date(DATA_CEIL); return }
+    anchor.value = a
+  },
+})
+
 const MIN_SHOW = 10000  // 展示门槛:过去PCU<1w、未来预约<1w 默认不展示(数据照常存,仅前端精简)
 
 // 组织某天要展示的场次:过滤低量 + 报备优先 + 同直播间合并(报备挂到指标/预约场次上)
@@ -271,11 +321,16 @@ function buildDaySessions(key) {
     return s
   })
   for (const r of reports) if (!usedReport.has(r.id)) merged.push(r)
-  // 过滤低量:过去PCU<1w 不展示;未来纯预约<1w 不展示;报备场次始终展示
+  // 过滤:报备场次始终展示;其余按规则过滤
   const kept = merged.filter(s => {
     if (s.is_report || s.report_info) return true
-    if (s.pcu != null) return s.pcu >= MIN_SHOW
-    if (s.reservation != null) return s.reservation >= MIN_SHOW
+    // 过去场次(有PCU):PCU<=0(数据源无有效流水) 或 空标题(源表无标题) 不展示——脏/残缺数据不上日历
+    if (s.pcu != null) {
+      if (s.pcu <= 0) return false
+      if (!s.title || !s.title.trim()) return false
+      return s.pcu >= MIN_SHOW          // 低量门槛:过去PCU<1w 不展示
+    }
+    if (s.reservation != null) return s.reservation >= MIN_SHOW   // 未来纯预约<1w 不展示
     return true
   })
   // 排序:报备优先 → PCU降序 → 预约降序
@@ -325,9 +380,45 @@ function shift(n) {
   const a = new Date(anchor.value)
   if (viewMode.value === 'month') a.setMonth(a.getMonth() + n)
   else a.setDate(a.getDate() + n * 7)
+  // 下界保护:向前(n<0)不早于数据下界;上界保护:向后(n>0)不晚于当前月的下个月。越界则忽略
+  if (n < 0 && !canGoPrevTo(a)) return
+  if (n > 0 && !canGoNextTo(a)) return
   anchor.value = a
 }
-function goToday() { anchor.value = new Date() }
+// 目标锚点对应的视图是否仍触及 >=DATA_FLOOR 的数据(月视图看当月末、周视图看周末)
+function canGoPrevTo(a) {
+  if (viewMode.value === 'month') {
+    const lastDay = new Date(a.getFullYear(), a.getMonth() + 1, 0)
+    return lastDay >= DATA_FLOOR
+  }
+  const d = new Date(a); const dow = (d.getDay() + 6) % 7
+  const weekEnd = new Date(d); weekEnd.setDate(d.getDate() - dow + 6)
+  return weekEnd >= DATA_FLOOR
+}
+// 目标锚点是否未超出上界 DATA_CEIL(月视图看当月1号<=下月、周视图看周一<=下月)
+function canGoNextTo(a) {
+  if (viewMode.value === 'month') {
+    const firstDay = new Date(a.getFullYear(), a.getMonth(), 1)
+    return firstDay <= DATA_CEIL
+  }
+  const d = new Date(a); const dow = (d.getDay() + 6) % 7
+  const weekStart = new Date(d); weekStart.setDate(d.getDate() - dow)
+  return weekStart <= DATA_CEIL
+}
+// 上月/上周按钮是否可点(当前锚点再往前一档是否越下界)
+const canGoPrev = computed(() => {
+  const a = new Date(anchor.value)
+  if (viewMode.value === 'month') a.setMonth(a.getMonth() - 1)
+  else a.setDate(a.getDate() - 7)
+  return canGoPrevTo(a)
+})
+// 下月/下周按钮是否可点(当前锚点再往后一档是否越上界)
+const canGoNext = computed(() => {
+  const a = new Date(anchor.value)
+  if (viewMode.value === 'month') a.setMonth(a.getMonth() + 1)
+  else a.setDate(a.getDate() + 7)
+  return canGoNextTo(a)
+})
 function openDetail(s) { detail.value = s; drawer.value = true }
 function openDay(cell) { dayCell.value = cell; dayDialog.value = true }
 function enterRoom() { if (detail.value?.room_url) window.open(detail.value.room_url, '_blank') }
@@ -341,8 +432,25 @@ onMounted(load)
 .lc-head h2 { margin: 0 0 4px; font-size: 22px; color: #1a2b4a; }
 .lc-head .sub { color: #6b7a90; font-size: 13px; margin: 0 0 14px; }
 .lc-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
-.nav { display: inline-flex; align-items: center; gap: 8px; }
+.nav { display: inline-flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.nav-row { display: flex; align-items: center; gap: 8px; }
 .cur-label { font-weight: 600; color: #2f4368; min-width: 120px; text-align: center; }
+/* 年份筛选:放在"上月"左侧同一行,大小与字体和上月/下月按钮完全一致(白底灰边、常规字重#606266) */
+.year-select { width: 88px; }
+.year-select :deep(.el-select__wrapper) {
+  background: #fff;
+  box-shadow: 0 0 0 1px #dcdfe6 inset;
+}
+.year-select :deep(.el-select__wrapper:hover) {
+  box-shadow: 0 0 0 1px #c0c4cc inset;
+}
+.year-select :deep(.el-select__wrapper.is-focused) {
+  box-shadow: 0 0 0 1px #2f6bd6 inset;
+}
+.year-select :deep(.el-select__placeholder) { color: #606266; }
+/* 选中的年份数字:加粗加深(700+深蓝),明显突出 */
+.year-select :deep(.el-select__selected-item) { color: #2f4368; font-weight: 700; }
+.year-select :deep(.el-select__caret) { color: #909399; }
 .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; width: 100%; box-sizing: border-box; }
 .weekday { text-align: center; font-size: 14px; color: #8a96a8; padding: 6px 0; font-weight: 600; }
 .day-cell { min-height: 150px; min-width: 0; box-sizing: border-box; overflow: visible; border: 1px solid #e3e8f0; border-radius: 8px; padding: 6px 8px; background: #fff; display: flex; flex-direction: column; cursor: pointer; transition: box-shadow .15s; }
@@ -389,6 +497,23 @@ onMounted(load)
 .cont-flow-tag { display:inline-block; margin-left:5px; font-size:10px; font-weight:600; color:#8a7500; background:#fff5cc; border:1px solid #ecd98a; border-radius:6px; padding:0 5px; vertical-align:middle; white-space:nowrap; }
 .cont-flow-hint { margin-top:6px; font-size:12px; color:#9a7b1a; background:#fffbe8; border-left:3px solid #ecc94b; border-radius:4px; padding:6px 10px; line-height:1.5; }
 .vip-banner { background:linear-gradient(90deg,#ff7a18,#ffb020); color:#fff; border:none; border-radius:8px; padding:11px 14px; font-weight:800; margin-bottom:14px; font-size:15px; letter-spacing:1px; box-shadow:0 2px 10px rgba(232,82,15,.35); }
+/* 脏数据(方案A):告警灰底+红边,压过一切高亮;PCU删除线;红色⚠️脏数据标签 */
+.sess.dirty { border-left:4px solid #c0392b !important; background:repeating-linear-gradient(45deg,#f7f2f2,#f7f2f2 8px,#f0e6e6 8px,#f0e6e6 16px) !important; box-shadow:0 0 0 1px #e0b4b0 inset; }
+.sess.dirty .sess-title { color:#7a5a58; font-weight:600; }
+.sess.dirty .anchor { color:#9a7876 !important; }
+.sess-metric .pcu.pcu-dirty { color:#a0392b !important; text-decoration:line-through; text-decoration-color:#c0392b; opacity:.75; font-weight:600; }
+.dirty-badge { margin-right:3px; font-size:13px; }
+.dirty-tag { color:#fff; background:#c0392b; border-radius:3px; padding:1px 6px; font-size:11px; font-weight:700; }
+/* 详情抽屉:脏数据红色警示条 */
+.detail .dirty-banner { background:linear-gradient(90deg,#e74c3c,#c0392b); color:#fff; border-radius:8px; padding:11px 14px; margin-bottom:14px; box-shadow:0 2px 10px rgba(192,57,43,.35); }
+.detail .dirty-banner .db-head { font-weight:800; font-size:15px; letter-spacing:.5px; }
+.detail .dirty-banner .db-note { font-size:12.5px; font-weight:400; line-height:1.55; margin-top:6px; opacity:.95; }
+.detail .v-dirty { color:#c0392b; text-decoration:line-through; text-decoration-color:#c0392b; }
+.detail .v-dirty-note { font-style:normal; color:#c0392b; font-size:12px; margin-left:6px; text-decoration:none; font-weight:600; }
+/* 当天弹窗:脏数据提示行 + PCU删除线 + 灰底 */
+.dd-sess.dirty { border-left-color:#c0392b; background:#faf5f5; box-shadow:0 0 0 1px #e0b4b0 inset; }
+.dd-dirty-hint { margin-top:6px; margin-bottom:2px; font-size:12px; color:#a03228; background:#fdeceb; border-left:3px solid #c0392b; border-radius:4px; padding:6px 10px; line-height:1.5; }
+.dd-chip.pcu.pcu-dirty { text-decoration:line-through; text-decoration-color:#c0392b; color:#a0392b; opacity:.8; }
 /* 当天全部场次弹窗 */
 .day-detail { display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow-y: auto; }
 .dd-sess { border: 1px solid #e3e8f0; border-left: 4px solid #c0c4cc; border-radius: 8px; padding: 12px 14px; background: #fafbfd; }

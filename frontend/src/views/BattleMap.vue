@@ -23,20 +23,23 @@
         </div>
         <el-collapse-transition>
           <div v-show="isOpen('__events__')">
-            <div class="bm-timeline">
-              <div v-for="(e, i) in events" :key="i" class="bm-event">
-                <div class="bm-event-head">
-                  <span class="bm-event-time">{{ e.time }}</span>
-                  <span class="bm-event-name">{{ e.name }}</span>
-                </div>
-                <div class="bm-event-note" v-if="e.note">{{ e.note }}</div>
-                <div class="bm-event-metrics" v-if="e.metrics && e.metrics.length">
-                  <div v-for="(m, j) in e.metrics" :key="j" class="bm-metric-row">
-                    <span class="bm-metric-k">{{ m.k }}</span>
-                    <span class="bm-metric-v">{{ m.v }}</span>
+            <div class="bm-year-group" v-for="grp in eventsByYear" :key="grp.year">
+              <div class="bm-year-label">{{ grp.year }}年</div>
+              <div class="bm-timeline">
+                <div v-for="(e, i) in grp.list" :key="i" class="bm-event">
+                  <div class="bm-event-head">
+                    <span class="bm-event-time">{{ e.time }}</span>
+                    <span class="bm-event-name">{{ e.name }}</span>
                   </div>
+                  <div class="bm-event-note" v-if="e.note">{{ e.note }}</div>
+                  <div class="bm-event-metrics" v-if="e.metrics && e.metrics.length">
+                    <div v-for="(m, j) in e.metrics" :key="j" class="bm-metric-row">
+                      <span class="bm-metric-k">{{ m.k }}</span>
+                      <span class="bm-metric-v" :class="{ 'bm-metric-hot': isHotMetric(m.v) }">{{ m.v }}</span>
+                    </div>
+                  </div>
+                  <div class="bm-event-nodata" v-else>暂无量级数据</div>
                 </div>
-                <div class="bm-event-nodata" v-else>暂无量级数据</div>
               </div>
             </div>
           </div>
@@ -167,6 +170,26 @@ let timer = null
 
 const generating = computed(() => progress.value.status === 'generating')
 const anyContent = computed(() => dimensions.value.some(d => d.content))
+
+// 历史大型活动:按年份分组。年份倒序(新→旧),年内按月份正序(早→晚)。
+const eventsByYear = computed(() => {
+  const groups = {}
+  for (const e of (events.value || [])) {
+    const ym = String(e.time || '')
+    const y = (ym.match(/^(\d{4})/) || [])[1] || '其他'
+    ;(groups[y] = groups[y] || []).push(e)
+  }
+  // 年内按 time 字符串升序(如 2024.02 < 2024.11)
+  for (const y in groups) groups[y].sort((a, b) => String(a.time).localeCompare(String(b.time)))
+  // 年份倒序
+  return Object.keys(groups).sort((a, b) => b.localeCompare(a)).map(y => ({ year: y, list: groups[y] }))
+})
+
+// PCU>300万判定:从 metrics 里任一 value 解析出"万"数值,超过300万则高亮
+function isHotMetric(v) {
+  const m = String(v || '').match(/([\d.]+)\s*万/)
+  return m ? parseFloat(m[1]) > 300 : false
+}
 
 function isOpen(dim) { return openSet.value.has(dim) }
 function toggle(dim) {
@@ -351,7 +374,12 @@ function viewDoc(doc) {
 .bm-role-scope { font-size: 12.5px; color: #5a6b85; line-height: 1.6; }
 
 /* 历史大型活动时间线 */
-.bm-timeline { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.bm-year-group { margin-top: 14px; }
+.bm-year-group:first-child { margin-top: 12px; }
+.bm-year-label { font-size: 15px; font-weight: 700; color: #2f80ff; padding: 4px 0 2px; border-bottom: 2px solid #e3ebf6; margin-bottom: 4px; }
+.bm-timeline { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.bm-metric-hot { color: #e4393c; font-weight: 800; background: #ffecec; border-color: #ffc2c2; letter-spacing: 0.3px; }
+.bm-metric-hot::before { content: "🔥"; margin-right: 3px; font-size: 12px; }
 .bm-event { padding: 10px 14px; border-radius: 8px; background: #fafcff; border: 1px solid #e3ebf6; border-left: 3px solid #2f80ff; }
 .bm-event-head { display: flex; align-items: baseline; gap: 10px; }
 .bm-event-time { font-size: 12px; color: #5a7bb0; font-weight: 600; min-width: 64px; }
@@ -360,7 +388,7 @@ function viewDoc(doc) {
 .bm-event-metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px; margin-top: 8px; }
 .bm-metric-row { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.5; }
 .bm-metric-k { flex: 0 0 auto; color: #5a6b85; min-width: 72px; font-weight: 600; }
-.bm-metric-v { color: #2c4a7c; }
+.bm-metric-v { color: #2c4a7c; display: inline-flex; align-items: center; padding: 0 8px; border: 1px solid transparent; border-radius: 5px; }
 .bm-event-nodata { font-size: 12px; color: #aab4c5; margin-top: 6px; }
 
 /* 规模基线 */

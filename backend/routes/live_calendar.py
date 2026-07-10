@@ -26,7 +26,7 @@ async def list_sessions(start: str, end: str, user: dict = Depends(require_login
             "SELECT id, session_time, title, anchor_name, pcu, reservation, room_id, "
             "watch_hours_fans, watch_hours_all, danmu_fans, danmu_all, "
             "enter_dau_fans, enter_dau_all, fans_growth_fans, fans_growth_all, "
-            "is_report, report_info "
+            "is_report, report_info, is_dirty, dirty_note "
             "FROM live_sessions WHERE session_time >= ? AND session_time <= ? "
             "ORDER BY session_time ASC",
             (start, end + " 23:59:59" if len(end) == 10 else end),
@@ -51,6 +51,8 @@ async def list_sessions(start: str, end: str, user: dict = Depends(require_login
             "fans_growth_all": r["fans_growth_all"],
             "is_report": r["is_report"],
             "report_info": json.loads(r["report_info"]) if r["report_info"] else None,
+            "is_dirty": r["is_dirty"] or 0,
+            "dirty_note": r["dirty_note"] or "",
         }
         for r in rows
     ]

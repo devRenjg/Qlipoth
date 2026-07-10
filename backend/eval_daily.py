@@ -3,7 +3,10 @@
 读取 .reimport_last_batch.json（当天重导成功的文件名 + 旧版备份目录），对这批文档：
 ① 录入质量：新旧 正文/图片/表格/乱码 指标对比
 ② 检索效率/质量：基于新内容出题，新库 vs 旧库各跑问答，LLM评委对比
-完全离线，monkeypatch _get_kb_dir，不碰线上。结果汇总打印并落盘。
+完全离线，monkeypatch _get_kb_dir，不碰线上。结果汇总打印并落盘到 %TEMP%/eval_daily_report.json。
+
+【每日汇报】本脚本产出是每日微信汇报的第②块，必须并入汇报(用户明确要求，别只报入库数)。
+完整汇报口径(四块+待入库--stats)见 migrate_wecom_reimport.py 头部 "DAILY REPORT" 注释块。
 """
 import asyncio
 import os
@@ -49,7 +52,16 @@ async def gen_questions(new_dir: str, files: list) -> list:
         [{"role": "system", "content": sysp}, {"role": "user", "content": "\n\n".join(blocks)[:24000]}],
         temperature=0.3, model=MODEL)
     txt = txt.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(txt)["questions"][:8]
+    # 鲁棒解析:LLM 偶发在 JSON 前后带说明文字/围栏残留,直接 loads 会崩。
+    # 先尝试直接解析,失败则截取第一个 { 到最后一个 } 再解析。
+    try:
+        obj = json.loads(txt)
+    except json.JSONDecodeError:
+        i, j = txt.find("{"), txt.rfind("}")
+        if i < 0 or j <= i:
+            raise ValueError(f"gen_questions LLM 未返回可解析JSON,前120字:{txt[:120]!r}")
+        obj = json.loads(txt[i:j + 1])
+    return obj.get("questions", [])[:8]
 
 
 async def answer_in_kb(question: str, kb_dir: str) -> dict:

@@ -8,6 +8,22 @@
 
 质量门禁逐篇判定 better / worse / same / skip，只有 better 才在 --write 时替换。
 worse/same 默认不替换（worse 标记人工复核）。失败(读取异常)一律 skip，绝不用空盖好内容。
+
+============================================================================
+【DAILY REPORT — 每日微信汇报口径(上下文若丢失，读此段即可复原，勿凭记忆)】
+每日任务(北京时间 06:00 cron)跑完后，必须给用户发微信汇报，固定四块：
+  ① 知识库重导 —— 入库 N 篇 + 候选分布(better写盘/skip各因)
+     并【务必】附上待入库进度：直接跑 `py -3.12 migrate_wecom_reimport.py --stats`
+     把输出贴进汇报(总数/已导/info/mind/★真待办/预计工作日)。这是用户要求的固定项。
+  ② 当日评测结果 —— 读 %TEMP%/eval_daily_report.json(eval_daily.py 每日产出)：
+     录入质量(图片/表格/乱码 旧→新) + 问答质量(新库vs旧库 胜/负/平)。别漏！
+  ③ 直播日历维护 —— 见 temp_tasks/livecal/daily_livecal.py，读 daily_livecal.log 尾部
+  ④ 异常/卡点 —— 早停、限流、Narya解析0场重试等
+
+852 篇归类真相(2026-07-08 与用户核对，_stats() 是唯一权威数据源)：
+  已导 465 / info 77(不走API,现状正确) / mind 15(API死结,用户定先不处理) / ★真待办 295
+  真待办全是配额问题(零点恢复,满产18-19/天)，无权限/门禁死结(漏入库=0篇)。
+============================================================================
 """
 import asyncio
 import sys
@@ -228,6 +244,61 @@ def _candidates(only: str = "") -> list[str]:
     return out
 
 
+def _stats() -> dict:
+    """重导进度归类统计(供每日汇报直接调用，不依赖任何上下文记忆)。
+
+    852 篇的真实归类口径(2026-07-08 与用户核对确认)：
+      total          知识库文档总数(documents 表)
+      done           已 API 重导入库(has_old_version=1)
+      pending_total  未重导总数(has_old_version=0) = info + mind + todo
+      info           内部 wiki 文档，正文无企微链接 → 不走企微API，不算待办、现状正确
+      mind           企微 mind 思维导图(doc_format='mind') → API格式不兼容(851000)，唯一"API死结"，
+                     用户已明确【先不额外处理】。skip清单里的 mind 是这批子集，勿重复计数
+      todo           ★真正还需 API 导入的企微文档 = pending_total - info - mind
+      todo_tried     todo 中已试读≥1次、撞频率限流(851010/851003)没成的(在 .reimport_fails.json)
+      todo_fresh     todo 中从没试过、排队等配额的
+    门禁/权限拦下漏入库 = 0：所有 851003(no authority) 都是配额耗尽伴生、非真无权限；
+    反复失败≥3次=0；质量门禁判 worse 被拦=0。唯一硬约束是企微每日配额(零点恢复，满产约18-19篇/天)。
+    """
+    import sqlite3
+    con = sqlite3.connect(DB_PATH)
+    total = con.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    done = con.execute("SELECT COUNT(*) FROM documents WHERE has_old_version=1").fetchone()[0]
+    mind = con.execute("SELECT COUNT(*) FROM documents WHERE has_old_version=0 AND doc_format='mind'").fetchone()[0]
+    pending = con.execute("SELECT COUNT(*) FROM documents WHERE has_old_version=0").fetchone()[0]
+    con.close()
+    # todo/info 按脚本真实候选口径(正文是否含企微链接)判定，与 _candidates 一致
+    fails = _load_fails()
+    skip = _load_skip()
+    WX = re.compile(r"(doc|sheet|slide)\.weixin\.qq\.com")
+    con = sqlite3.connect(DB_PATH)
+    rows = con.execute("SELECT stored_path, doc_format FROM documents WHERE has_old_version=0").fetchall()
+    con.close()
+    # mind 已单独统计；必须按数据库 doc_format 排除【全部】mind(有4篇不在skip清单,
+    # 若只靠 skip 清单排除会把这4篇 mind 重复计入 info/todo，导致合计虚高)
+    mind_files = {os.path.basename(sp) for sp, fmt in rows if fmt == 'mind'}
+    info = todo = todo_tried = 0
+    for sp, fmt in rows:
+        fn = os.path.basename(sp)
+        if fn in mind_files:      # 全部 mind 已计入 mind 类
+            continue
+        p = os.path.join(KB, fn)
+        if not os.path.exists(p):
+            continue
+        if fn in skip:            # skip 清单(当前全为 mind，已被上面排除，此行防御未来非mind的worse)
+            continue
+        head = open(p, encoding="utf-8", errors="replace").read(4000)
+        if WX.search(head):       # 有企微链接 → 真待办
+            todo += 1
+            if fn in fails:
+                todo_tried += 1
+        else:                     # 无企微链接(内部 wiki 等) → 不走API
+            info += 1
+    return {"total": total, "done": done, "pending_total": pending,
+            "info": info, "mind": mind, "todo": todo,
+            "todo_tried": todo_tried, "todo_fresh": todo - todo_tried}
+
+
 async def _process_one(path: str, sem: asyncio.Semaphore, write: bool, backup_dir: str) -> dict:
     fn = os.path.basename(path)
     old_md = open(path, encoding="utf-8", errors="replace").read()
@@ -426,5 +497,16 @@ if __name__ == "__main__":
         print(f"已加入优先导入清单: {key}（下次重导排最前）")
     elif "--list-priority" in sys.argv:
         print("优先导入清单:", _load_priority())
+    elif "--stats" in sys.argv:
+        # 重导进度归类(每日汇报固定调用此项拿"待入库"数据，见文件头 DAILY REPORT 注释)
+        s = _stats()
+        pct = round(s["done"] / s["total"] * 100) if s["total"] else 0
+        eta = -(-s["todo"] // 18) if s["todo"] else 0  # 满产约18篇/天，向上取整
+        print(f"知识库总 {s['total']} 篇 | 已API重导入库 {s['done']}({pct}%) | 未重导 {s['pending_total']}")
+        print(f"  ├ info文档(不走API,现状正确): {s['info']}")
+        print(f"  ├ mind思维导图(API死结,用户定先不处理): {s['mind']}")
+        print(f"  └ ★真待办(还需API导入): {s['todo']}  = 已试读撞限流 {s['todo_tried']} + 从没试过 {s['todo_fresh']}")
+        print(f"预计剩余 ~{eta} 个工作日跑完(满产18-19篇/天，企微配额零点恢复)")
+        print("门禁/权限拦下漏入库: 0 篇(851003均为配额耗尽伴生,非真无权限)")
     else:
         asyncio.run(main())

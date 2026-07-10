@@ -538,10 +538,26 @@ async def query_knowledge_base_stream(req: QueryRequest, request: Request, user:
     else:
         resolved_q, is_followup, coref_time = req.question, False, 0.0
 
-    try:
-        strategy, strategy_llm_time = await generate_search_strategy(resolved_q)
-    except RuntimeError as e:
-        raise HTTPException(502, f"LLM 搜索策略生成失败: {e}")
+    # 直播日历优先分支:命中"场次PCU/时间/高热业务数据"意图 → 直接用日历精准数据回答。
+    # 查不到相关场次则 livecal_ctx=None,自动回退下方知识库流程(与用户对齐 A1/B1/C2)。
+    livecal_ctx = None
+    if not req.tag_ids:  # 用户手动选了标签筛选=明确要查知识库,不劫持
+        try:
+            from livecal_qa import detect_livecal_intent, fetch_livecal_context
+            if detect_livecal_intent(resolved_q):
+                livecal_ctx = await fetch_livecal_context(resolved_q)
+        except Exception:
+            livecal_ctx = None
+
+    if livecal_ctx is not None:
+        # 走日历精准数据分支:跳过知识库搜索策略与 grep
+        strategy = {"keywords": [resolved_q], "file_pattern": "*", "source": "live_calendar"}
+        strategy_llm_time = 0.0
+    else:
+        try:
+            strategy, strategy_llm_time = await generate_search_strategy(resolved_q)
+        except RuntimeError as e:
+            raise HTTPException(502, f"LLM 搜索策略生成失败: {e}")
 
     # 行为日志（尽力而为）：记录问答
     try:
@@ -557,16 +573,21 @@ async def query_knowledge_base_stream(req: QueryRequest, request: Request, user:
     file_pattern = strategy.get("file_pattern", "*")
 
     t0 = time.perf_counter()
-    results = grep_search(keywords, file_pattern)
-    if req.tag_ids:
-        allowed = await _tagged_stored_paths(req.tag_ids)
-        results = _filter_results_by_paths(results, allowed)
-    t_search = time.perf_counter() - t0
-
-    if results:
-        search_text, files_to_read, relevant_images = _assemble_context(results, resolved_q)
+    if livecal_ctx is not None:
+        # 日历分支:直接用精准数据作为 context,不搜知识库
+        results = []
+        search_text = livecal_ctx
+        files_to_read, relevant_images = [], []
     else:
-        search_text, files_to_read, relevant_images = "未找到相关内容。", [], []
+        results = grep_search(keywords, file_pattern)
+        if req.tag_ids:
+            allowed = await _tagged_stored_paths(req.tag_ids)
+            results = _filter_results_by_paths(results, allowed)
+        if results:
+            search_text, files_to_read, relevant_images = _assemble_context(results, resolved_q)
+        else:
+            search_text, files_to_read, relevant_images = "未找到相关内容。", [], []
+    t_search = time.perf_counter() - t0
 
     sources = [{"file": r.file, "line": r.line_number, "content": r.content} for r in results[:10]]
     source_urls = _extract_source_urls(files_to_read if results else [])
@@ -591,6 +612,7 @@ async def query_knowledge_base_stream(req: QueryRequest, request: Request, user:
             "timing_search": round(t_search, 2),
             "search_results_count": len(results),
             "context_chars": len(search_text),
+            "data_source": "live_calendar" if livecal_ctx is not None else "knowledge_base",
         }
         yield f"data: {json.dumps({'type': 'meta', 'data': meta}, ensure_ascii=False)}\n\n"
 
