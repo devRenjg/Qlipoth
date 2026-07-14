@@ -1,7 +1,23 @@
 <template>
   <div class="lc">
     <div class="lc-head">
-      <h2>📅 直播日历</h2>
+      <div class="lc-title-row">
+        <h2>📅 直播日历</h2>
+        <el-tooltip v-if="isLoggedIn" :content="reportRefreshTooltip" placement="bottom">
+          <span class="refresh-report-trigger" @click="refreshReports">
+            <el-button
+              class="refresh-report-btn"
+              type="primary"
+              :loading="refreshingReports"
+              :disabled="refreshingReports || reportRefreshCooldownActive"
+              :aria-label="reportRefreshAriaLabel"
+            >
+              <span v-if="!refreshingReports" class="refresh-icon" aria-hidden="true">🔄</span>
+              {{ reportRefreshButtonText }}
+            </el-button>
+          </span>
+        </el-tooltip>
+      </div>
       <p class="sub">回看过去重要直播的实际 PCU，前瞻未来场次的预约热度</p>
       <div class="lc-toolbar">
         <el-radio-group v-model="viewMode" size="small">
@@ -155,11 +171,14 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, inject } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, inject } from 'vue'
 import axios from 'axios'
+import { ElMessage } from 'element-plus'
 
 const currentUser = inject('currentUser', null)
 const isAdmin = computed(() => currentUser?.value?.role === 'admin')
+// 访客(未登录)不允许刷新报备场次,按钮仅登录用户可见
+const isLoggedIn = computed(() => !!currentUser?.value?.id)
 // 审批单据链接(仅管理员可见,用于人工校准报备数据)。
 // 内部域名走环境变量脱敏,公开仓库不含真实地址;本地 .env.local 配 VITE_SHENPI_URL 即可。
 const SHENPI_URL = import.meta.env.VITE_SHENPI_URL || ''
@@ -170,6 +189,24 @@ const viewMode = ref('month')
 const anchor = ref(new Date())   // 当前视图锚点日期
 const sessions = ref([])
 const loading = ref(false)
+const refreshingReports = ref(false)
+const reportRefreshCooldown = ref(0)
+const reportRefreshCooldownActive = computed(() => reportRefreshCooldown.value > 0)
+const reportRefreshButtonText = computed(() => reportRefreshCooldownActive.value && !refreshingReports.value
+  ? `仅刷新报备场次（${reportRefreshCooldown.value}s）`
+  : '仅刷新报备场次')
+const reportRefreshTooltip = computed(() => reportRefreshCooldownActive.value
+  ? `冷却中，还需 ${reportRefreshCooldown.value} 秒。刷新今天及之后 10 天的报备场次`
+  : '刷新今天及之后 10 天的报备场次，不会刷新其他场次')
+const reportRefreshAriaLabel = computed(() => {
+  if (refreshingReports.value) return '正在刷新报备场次，请稍候'
+  if (reportRefreshCooldownActive.value) return `刷新报备场次冷却中，还需 ${reportRefreshCooldown.value} 秒`
+  return '刷新今天及之后 10 天的报备场次'
+})
+const REPORT_REFRESH_COOLDOWN_MS = 30_000
+let reportRefreshUnmounted = false
+let reportRefreshCooldownDeadline = 0
+let reportRefreshCooldownTimer = null
 const drawer = ref(false)
 const detail = ref(null)
 const dayDialog = ref(false)
@@ -383,13 +420,124 @@ const cells = computed(() => {
   return out
 })
 
-async function load() {
+async function load({ preserveOnError = false } = {}) {
   loading.value = true
   try {
     const { start, end } = viewRange()
     const { data } = await api.get('/live-calendar/sessions', { params: { start: ymd(start), end: ymd(end) } })
     sessions.value = data
-  } catch (e) { sessions.value = [] } finally { loading.value = false }
+    return true
+  } catch (e) {
+    if (!preserveOnError) sessions.value = []
+    return false
+  } finally { loading.value = false }
+}
+
+function refreshErrorMessage(error) {
+  const status = error?.response?.status
+  const rawDetail = error?.response?.data?.detail || error?.response?.data?.message
+  const detail = typeof rawDetail === 'string' ? rawDetail.trim() : ''
+  if (status === 409) return detail || '报备刷新正在进行中，请稍候再试'
+  if (status === 503) return detail ? `当前环境不支持报备刷新：${detail}` : '当前环境不支持报备刷新'
+  if (status === 502) return detail || '外部审批中台拉取异常，请稍后重试'
+  if (detail) return detail
+  return error?.message || '请求失败，请稍后重试'
+}
+
+function showReportRefreshError(error) {
+  const status = error?.response?.status
+  const message = refreshErrorMessage(error)
+  if (status === 409) {
+    ElMessage.warning({ message, duration: 4000 })
+  } else if (status === 503) {
+    ElMessage.error(message)
+  } else {
+    ElMessage.error(`刷新报备场次失败：${message}`)
+  }
+}
+
+function clearReportRefreshCooldownTimer() {
+  if (reportRefreshCooldownTimer !== null) {
+    window.clearTimeout(reportRefreshCooldownTimer)
+    reportRefreshCooldownTimer = null
+  }
+}
+
+function updateReportRefreshCooldown() {
+  reportRefreshCooldownTimer = null
+  if (reportRefreshUnmounted) return
+
+  const remainingMs = reportRefreshCooldownDeadline - Date.now()
+  if (remainingMs <= 0) {
+    reportRefreshCooldown.value = 0
+    reportRefreshCooldownDeadline = 0
+    return
+  }
+
+  reportRefreshCooldown.value = Math.ceil(remainingMs / 1000)
+  reportRefreshCooldownTimer = window.setTimeout(updateReportRefreshCooldown, Math.min(1000, remainingMs))
+}
+
+function startReportRefreshCooldown() {
+  clearReportRefreshCooldownTimer()
+  reportRefreshCooldownDeadline = Date.now() + REPORT_REFRESH_COOLDOWN_MS
+  reportRefreshCooldown.value = REPORT_REFRESH_COOLDOWN_MS / 1000
+  reportRefreshCooldownTimer = window.setTimeout(updateReportRefreshCooldown, 1000)
+}
+
+async function refreshReports() {
+  if (reportRefreshCooldownActive.value) {
+    ElMessage.warning('您刷新太快了！')
+    return
+  }
+  if (refreshingReports.value) return
+  startReportRefreshCooldown()
+  refreshingReports.value = true
+  try {
+    const { data = {} } = await api.post('/live-calendar/refresh-reports')
+    if (reportRefreshUnmounted) return
+    const hasValidStats = ['total', 'updated', 'failed'].every(key => Number.isFinite(data[key]))
+    if (data.ok !== true || !hasValidStats) {
+      throw new Error('刷新接口返回异常，请稍后重试')
+    }
+
+    const reloaded = await load({ preserveOnError: true })
+    if (reportRefreshUnmounted) return
+
+    // 基于真实变化(新增/变更/删除)反馈,而非"回写条数"(每次全量重写,回写数≈窗口总数,无法感知变化)
+    const c = data.changes || {}
+    const hasChangeStats = ['added', 'changed', 'removed'].every(key => Number.isFinite(c[key]))
+    let resultMessage
+    let noChange = false
+    if (hasChangeStats) {
+      const parts = []
+      if (c.added > 0) parts.push(`新增 ${c.added} 条`)
+      if (c.changed > 0) parts.push(`更新 ${c.changed} 条`)
+      if (c.removed > 0) parts.push(`移除 ${c.removed} 条`)
+      if (parts.length) {
+        resultMessage = `报备场次已刷新：${parts.join('，')}（命中 ${data.total} 单据${data.failed > 0 ? `，${data.failed} 单据详情拉取失败` : ''}）`
+      } else {
+        noChange = true
+        resultMessage = `报备数据已是最新，无新增更新（命中 ${data.total} 单据${data.failed > 0 ? `，${data.failed} 单据详情拉取失败` : ''}）`
+      }
+    } else {
+      // 兜底:后端未返回 changes 时回退旧文案
+      resultMessage = `已刷新 ${data.updated} 条报备场次（命中 ${data.total} 单据${data.failed > 0 ? `，${data.failed} 单据详情拉取失败` : ''}）`
+    }
+    if (!reloaded) {
+      ElMessage.warning({ message: `${resultMessage}，但日历视图重新加载失败，请稍后重试`, duration: 5000 })
+    } else if (data.failed > 0) {
+      ElMessage.warning({ message: resultMessage, duration: 5000 })
+    } else if (noChange) {
+      ElMessage.info({ message: resultMessage, duration: 4000 })
+    } else {
+      ElMessage.success({ message: resultMessage, duration: 4000 })
+    }
+  } catch (error) {
+    if (!reportRefreshUnmounted) showReportRefreshError(error)
+  } finally {
+    if (!reportRefreshUnmounted) refreshingReports.value = false
+  }
 }
 
 function shift(n) {
@@ -439,8 +587,18 @@ function openDetail(s) { detail.value = s; drawer.value = true }
 function openDay(cell) { dayCell.value = cell; dayDialog.value = true }
 function enterRoom() { if (detail.value?.room_url) window.open(detail.value.room_url, '_blank') }
 
-watch([viewMode, anchor], load)
-onMounted(load)
+watch([viewMode, anchor], () => load())
+onMounted(() => {
+  reportRefreshUnmounted = false
+  load()
+})
+onBeforeUnmount(() => {
+  reportRefreshUnmounted = true
+  clearReportRefreshCooldownTimer()
+  reportRefreshCooldownDeadline = 0
+  reportRefreshCooldown.value = 0
+  refreshingReports.value = false
+})
 </script>
 
 <!-- 非 scoped:el-drawer 被 teleport 到 body,scoped :deep 匹配不到,必须用全局样式压缩标题↔正文间距 -->
@@ -451,7 +609,12 @@ onMounted(load)
 
 <style scoped>
 .lc { max-width: 100%; margin: 0 auto; padding: 8px 8px 40px; box-sizing: border-box; overflow-x: hidden; }
-.lc-head h2 { margin: 0 0 4px; font-size: 22px; color: #1a2b4a; }
+.lc-title-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 4px; }
+.lc-head h2 { margin: 0; font-size: 22px; color: #1a2b4a; }
+.refresh-report-trigger { display: inline-flex; flex-shrink: 0; margin-left: auto; }
+.refresh-report-trigger :deep(.el-button.is-disabled) { pointer-events: none; }
+.refresh-report-btn { font-weight: 700; box-shadow: 0 3px 10px rgba(47, 107, 214, .28); }
+.refresh-icon { margin-right: 6px; }
 .lc-head .sub { color: #6b7a90; font-size: 13px; margin: 0 0 14px; }
 .lc-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
 .nav { display: inline-flex; flex-direction: column; align-items: stretch; gap: 8px; }
