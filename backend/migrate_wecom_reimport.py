@@ -355,6 +355,9 @@ async def _process_one(path: str, sem: asyncio.Semaphore, write: bool, backup_di
         with open(path, "w", encoding="utf-8") as f:
             f.write(new_md)
         # DB 标记有旧版 + 更新大小 + 刷新上传时间(便于按最新排序验收)
+        # 注意:此前已把旧版存入 OLD_DIR、并覆盖为新版——即使这里 DB 更新失败/进程被杀,
+        # OLD_DIR 里的文件也已是"已重导"的持久标记,resume 会据此跳过、不会重复耗配额。
+        # 所以 DB 失败不再静默吞掉,改为显式告警,便于事后补标。
         try:
             import sqlite3
             now = datetime.now(_BJ).strftime("%Y-%m-%d %H:%M:%S")
@@ -362,8 +365,8 @@ async def _process_one(path: str, sem: asyncio.Semaphore, write: bool, backup_di
             con.execute("UPDATE documents SET has_old_version=1, file_size=?, uploaded_at=? WHERE stored_path=?",
                         (os.path.getsize(path), now, fn))
             con.commit(); con.close()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"    ⚠ DB标记失败(文件已重导,OLD_DIR已留标记,resume可兜底): {fn} — {e}", flush=True)
         rec["written"] = True
     return rec
 
@@ -381,15 +384,23 @@ async def main():
             limit = int(args[i + 1])
 
     cands = _candidates(only)
-    # --resume：跳过已成功重导的(有旧版备份)，只跑剩下的
+    # --resume：跳过已成功重导的，只跑剩下的
+    # 判定"已重导"用双重依据(抗进程中断):
+    #   1) DB has_old_version=1
+    #   2) 文件已存在于 knowledge_base_old/(成功重导时才写入,幂等持久标记)
+    # 单靠 DB 会漏判——若进程在"已存旧版+写盘"到"DB提交"之间被杀,
+    # 文件已进 OLD_DIR 但 DB 仍为 0,resume 会重复处理、白耗配额。
     if "--resume" in args:
         import sqlite3
         con = sqlite3.connect(DB_PATH)
         done_set = {r[0] for r in con.execute("SELECT stored_path FROM documents WHERE has_old_version=1").fetchall()}
         con.close()
+        old_done = set(os.listdir(OLD_DIR)) if os.path.isdir(OLD_DIR) else set()
         before = len(cands)
-        cands = [p for p in cands if os.path.basename(p) not in done_set]
-        print(f"[resume] 跳过已重导 {before - len(cands)} 篇，剩 {len(cands)} 篇", flush=True)
+        cands = [p for p in cands
+                 if os.path.basename(p) not in done_set
+                 and os.path.basename(p) not in old_done]
+        print(f"[resume] 跳过已重导 {before - len(cands)} 篇(DB标记{len(done_set)}/旧版目录{len(old_done)}),剩 {len(cands)} 篇", flush=True)
     if limit:
         cands = cands[:limit]
     ts = datetime.now(_BJ).strftime("%Y%m%d_%H%M%S")

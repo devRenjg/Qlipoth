@@ -48,20 +48,33 @@ async def gen_questions(new_dir: str, files: list) -> list:
         blocks.append(f"【{f}】\n{t[:1400]}")
     sysp = ("下面是若干篇文档内容。基于真实内容拟 8 个问答评测问题，覆盖具体数据/故障原因/"
             "处置措施/表格信息。答案要能从文中找到。返回严格JSON:{\"questions\":[...]}（恰好8个，只输出JSON）")
-    txt, _ = await llm.chat_completion(
-        [{"role": "system", "content": sysp}, {"role": "user", "content": "\n\n".join(blocks)[:24000]}],
-        temperature=0.3, model=MODEL)
-    txt = txt.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    # 鲁棒解析:LLM 偶发在 JSON 前后带说明文字/围栏残留,直接 loads 会崩。
-    # 先尝试直接解析,失败则截取第一个 { 到最后一个 } 再解析。
-    try:
-        obj = json.loads(txt)
-    except json.JSONDecodeError:
-        i, j = txt.find("{"), txt.rfind("}")
-        if i < 0 or j <= i:
-            raise ValueError(f"gen_questions LLM 未返回可解析JSON,前120字:{txt[:120]!r}")
-        obj = json.loads(txt[i:j + 1])
-    return obj.get("questions", [])[:8]
+
+    def _parse(txt: str):
+        txt = txt.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        # 先直接解析;失败则截取第一个 { 到最后一个 } 再解析(去前后杂质)
+        try:
+            return json.loads(txt)
+        except json.JSONDecodeError:
+            i, j = txt.find("{"), txt.rfind("}")
+            if i < 0 or j <= i:
+                return None
+            try:
+                return json.loads(txt[i:j + 1])
+            except json.JSONDecodeError:
+                return None  # JSON 内部损坏(如中间缺逗号),交给外层重试
+
+    # LLM 偶发返回损坏JSON(前后杂质 or 内部语法错)。重试最多3次重新生成,
+    # 仍失败则返回空列表(让调用方跳过本次评测,而非崩掉整个每日任务)。
+    for attempt in range(3):
+        txt, _ = await llm.chat_completion(
+            [{"role": "system", "content": sysp}, {"role": "user", "content": "\n\n".join(blocks)[:24000]}],
+            temperature=0.3 + attempt * 0.2, model=MODEL)
+        obj = _parse(txt)
+        if obj is not None:
+            return obj.get("questions", [])[:8]
+        print(f"[eval] gen_questions 第{attempt + 1}次JSON解析失败,重试...", flush=True)
+    print("[eval] gen_questions 连续3次解析失败,跳过检索质量评测", flush=True)
+    return []
 
 
 async def answer_in_kb(question: str, kb_dir: str) -> dict:
@@ -150,10 +163,20 @@ async def main():
     questions = await gen_questions(ND, usable)
     qres = []
     for q in questions:
-        nr = await answer_in_kb(q, ND)
-        orr = await answer_in_kb(q, OD)
-        j = await judge(q, nr["answer"], orr["answer"])
-        qres.append({"q": q, "new": nr, "old": orr, "judge": j})
+        # 单题容错:内网LLM网关偶发流式中断(RemoteProtocolError)等网络抖动,
+        # 重试1次;仍失败则跳过该题,不让整个评测崩溃(评测是抽样统计,漏1题不影响结论)。
+        for attempt in range(2):
+            try:
+                nr = await answer_in_kb(q, ND)
+                orr = await answer_in_kb(q, OD)
+                j = await judge(q, nr["answer"], orr["answer"])
+                qres.append({"q": q, "new": nr, "old": orr, "judge": j})
+                break
+            except Exception as e:
+                if attempt == 0:
+                    print(f"[eval] 题[{q[:20]}]答题异常({type(e).__name__}),重试...", flush=True)
+                else:
+                    print(f"[eval] 题[{q[:20]}]重试仍失败,跳过: {type(e).__name__}", flush=True)
 
     from collections import Counter
     wc = Counter(r["judge"]["winner"] for r in qres)
