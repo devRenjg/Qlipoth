@@ -48,7 +48,7 @@
                 <span v-if="s.pcu!=null" class="pcu" :class="{ 'pcu-dirty': isDirty(s) }">PCU {{ fmt(s.pcu) }}</span>
                 <span v-if="isDirty(s)" class="dirty-tag" title="PCU疑似口径异常">⚠️脏数据</span>
                 <span v-if="s.reservation!=null" class="rsv">预约 {{ fmt(s.reservation) }}</span>
-                <span v-if="s.is_report" class="report-tag" :class="{ 'report-tag-pending': s.report_info?.order_type==='审批中' }">{{ s.report_info?.order_type==='审批中' ? '审批中' : '已报备' }}{{ s.report_info?.pcu_display ? '·预估PCU '+s.report_info.pcu_display : '' }}</span>
+                <span v-if="s.is_report" class="report-tag" :class="{ 'report-tag-pending': s.report_info?.order_type==='审批中' }" :title="reportTagTitle(s)">{{ s.report_info?.order_type==='审批中' ? '审批中' : '已报备' }}{{ s.report_info?.pcu_display ? '·预估PCU '+s.report_info.pcu_display : '' }}</span>
               </div>
             </div>
           </div>
@@ -121,6 +121,10 @@
         <!-- 报备信息区(重要直播活动报备):指标区之下 -->
         <div v-if="detail.report_info" class="report-block">
           <div class="rb-head">🛡 报备信息 <span class="rb-sub">重要直播活动报备</span><span v-if="detail.report_info.order_type==='审批中'" class="rb-pending">审批中</span></div>
+          <div v-if="detail.report_info.order_type==='审批中'" class="rb-stuck">
+            <template v-if="detail.report_info.pending_actor">⏳ 当前卡在 <b>{{ detail.report_info.pending_actor }}</b> 的「{{ detail.report_info.pending_node }}」节点<template v-if="detail.report_info.pending_since">，到达于 {{ detail.report_info.pending_since }}</template></template>
+            <template v-else>⏳ 审批流进行中，卡点在我方审批节点之外（如部门负责人/成本确认等前置节点）</template>
+          </div>
           <div class="d-row"><span class="d-lbl">活动名称</span><span>{{ detail.report_info.name || '—' }}</span></div>
           <div class="d-row"><span class="d-lbl">报备时段</span><span>{{ detail.report_info.time_start }} ~ {{ detail.report_info.time_end }}</span></div>
           <div class="d-row"><span class="d-lbl">预估 PCU</span><span>{{ detail.report_info.pcu_display || detail.report_info.pcu || '—' }}<i class="rb-note">（报备原值 {{ detail.report_info.pcu }}，单位「万」）</i></span></div>
@@ -193,6 +197,16 @@ const hasDual = (f, a) => f != null || a != null
 // 脏数据:后端标记的口径异常场次(PCU值保留不洗,仅前端显著标记提示)。
 // 优先级最高——脏数据一律走告警样式,压过 mega/vip 所有高亮,避免脏值被当顶流误导。
 const isDirty = (s) => !!(s.is_dirty)
+// 报备标签 hover 文案:审批中的单显示"当前卡在XX的XX节点"
+const reportTagTitle = (s) => {
+  const ri = s.report_info
+  if (!ri) return ''
+  if (ri.order_type !== '审批中') return '已报备'
+  if (ri.pending_actor) {
+    return `审批中 · 当前卡在 ${ri.pending_actor} 的「${ri.pending_node}」节点` + (ri.pending_since ? `（到达于 ${ri.pending_since}）` : '')
+  }
+  return '审批中 · 卡点在我方审批节点之外（如部门负责人/成本确认等前置节点）'
+}
 // 重点关注官号/高优Up白名单(主播名精确匹配)→ 特殊标识
 const VIP_ANCHORS = ['哔哩哔哩弹幕网', '哔哩哔哩直播', '影视飓风', '哔哩哔哩英雄联盟赛事', '哔哩哔哩晚会', '央视新闻']
 const isVip = (s) => !isDirty(s) && VIP_ANCHORS.includes((s.anchor_name || '').trim())
@@ -554,6 +568,8 @@ onMounted(load)
 .detail .report-block { margin-top: 14px; padding: 10px 12px; background: #fffbf0; border: 1px solid #ffe7ba; border-radius: 6px; }
 .detail .rb-head { font-size: 14px; font-weight: 600; color: #d48806; margin-bottom: 8px; }
 .detail .rb-head .rb-sub { font-size: 12px; font-weight: 400; color: #b8935a; margin-left: 4px; }
+.detail .rb-stuck { background:#fff7e6; border:1px solid #ffd591; border-radius:4px; padding:6px 10px; margin-bottom:8px; font-size:12px; color:#ad6800; line-height:1.5; }
+.detail .rb-stuck b { color:#d46b08; }
 .detail .rb-note { font-style: normal; color: #c0c4cc; font-size: 12px; margin-left: 4px; }
 .detail .rb-reason { text-align: left; color: #606266; font-size: 13px; line-height: 1.5; }
 .detail .rb-link { color: #2f6bd6; text-decoration: none; font-weight: 600; }
