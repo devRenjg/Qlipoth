@@ -443,10 +443,13 @@ watch([viewMode, anchor], load)
 onMounted(load)
 </script>
 
+<!-- 非 scoped:el-drawer 被 teleport 到 body,scoped :deep 匹配不到,必须用全局样式压缩标题↔正文间距 -->
+<style>
+.lc-drawer .el-drawer__header { margin-bottom: 4px !important; padding-bottom: 0 !important; }
+.lc-drawer .el-drawer__body { padding-top: 4px !important; }
+</style>
+
 <style scoped>
-/* 单场详情抽屉:压缩标题与正文之间的默认大间距(Element Plus 默认 header margin-bottom:32px) */
-.lc-drawer :deep(.el-drawer__header) { margin-bottom: 2px; padding-bottom: 0; }
-.lc-drawer :deep(.el-drawer__body) { padding-top: 0; }
 .lc { max-width: 100%; margin: 0 auto; padding: 8px 8px 40px; box-sizing: border-box; overflow-x: hidden; }
 .lc-head h2 { margin: 0 0 4px; font-size: 22px; color: #1a2b4a; }
 .lc-head .sub { color: #6b7a90; font-size: 13px; margin: 0 0 14px; }
