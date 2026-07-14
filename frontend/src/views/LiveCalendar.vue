@@ -85,7 +85,7 @@
     </el-dialog>
 
     <!-- 单场详情抽屉 -->
-    <el-drawer v-model="drawer" :title="detail?.title || '场次详情'" size="380px">
+    <el-drawer v-model="drawer" :title="detail?.title || '场次详情'" size="380px" class="lc-drawer">
       <div v-if="detail" class="detail">
         <div v-if="isDirty(detail)" class="dirty-banner">
           <div class="db-head">⚠️ 本场 PCU 为脏数据，不代表真实观看</div>
@@ -444,6 +444,9 @@ onMounted(load)
 </script>
 
 <style scoped>
+/* 单场详情抽屉:压缩标题与正文之间的默认大间距(Element Plus 默认 header margin-bottom:32px) */
+.lc-drawer :deep(.el-drawer__header) { margin-bottom: 12px; padding-bottom: 0; }
+.lc-drawer :deep(.el-drawer__body) { padding-top: 0; }
 .lc { max-width: 100%; margin: 0 auto; padding: 8px 8px 40px; box-sizing: border-box; overflow-x: hidden; }
 .lc-head h2 { margin: 0 0 4px; font-size: 22px; color: #1a2b4a; }
 .lc-head .sub { color: #6b7a90; font-size: 13px; margin: 0 0 14px; }
