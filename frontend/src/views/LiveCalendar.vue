@@ -48,7 +48,7 @@
                 <span v-if="s.pcu!=null" class="pcu" :class="{ 'pcu-dirty': isDirty(s) }">PCU {{ fmt(s.pcu) }}</span>
                 <span v-if="isDirty(s)" class="dirty-tag" title="PCU疑似口径异常">⚠️脏数据</span>
                 <span v-if="s.reservation!=null" class="rsv">预约 {{ fmt(s.reservation) }}</span>
-                <span v-if="s.is_report" class="report-tag">已报备{{ s.report_info?.pcu_display ? '·预估PCU '+s.report_info.pcu_display : '' }}</span>
+                <span v-if="s.is_report" class="report-tag" :class="{ 'report-tag-pending': s.report_info?.order_type==='审批中' }">{{ s.report_info?.order_type==='审批中' ? '审批中' : '已报备' }}{{ s.report_info?.pcu_display ? '·预估PCU '+s.report_info.pcu_display : '' }}</span>
               </div>
             </div>
           </div>
@@ -120,7 +120,7 @@
 
         <!-- 报备信息区(重要直播活动报备):指标区之下 -->
         <div v-if="detail.report_info" class="report-block">
-          <div class="rb-head">🛡 报备信息 <span class="rb-sub">重要直播活动报备</span></div>
+          <div class="rb-head">🛡 报备信息 <span class="rb-sub">重要直播活动报备</span><span v-if="detail.report_info.order_type==='审批中'" class="rb-pending">审批中</span></div>
           <div class="d-row"><span class="d-lbl">活动名称</span><span>{{ detail.report_info.name || '—' }}</span></div>
           <div class="d-row"><span class="d-lbl">报备时段</span><span>{{ detail.report_info.time_start }} ~ {{ detail.report_info.time_end }}</span></div>
           <div class="d-row"><span class="d-lbl">预估 PCU</span><span>{{ detail.report_info.pcu_display || detail.report_info.pcu || '—' }}<i class="rb-note">（报备原值 {{ detail.report_info.pcu }}，单位「万」）</i></span></div>
@@ -488,6 +488,8 @@ onMounted(load)
 .sess.report .anchor { color:#2f6bd6 !important; font-weight:600; }
 .sess.report .report-badge { font-size:14px; }
 .sess-metric .report-tag { color:#fff; background:#2f6bd6; border:none; border-radius:3px; padding:1px 6px; font-size:11px; font-weight:600; }
+.sess-metric .report-tag-pending { background:#e8952f; }
+.rb-pending { display:inline-block; margin-left:8px; color:#fff; background:#e8952f; border-radius:3px; padding:1px 7px; font-size:12px; font-weight:600; }
 .vip-star { color:#e8952f; font-weight:900; font-size:14px; margin-right:3px; }
 /* 百万级PCU(最高优先):最强高亮——红金渐变+发光边框+加粗放大 */
 .sess.mega { border-left:5px solid #e01f1f !important; background:linear-gradient(135deg,#ffe08a,#ff9d5c,#ff6b6b) !important; box-shadow:0 0 0 2px #ff3b3b inset, 0 0 12px rgba(255,60,60,.55); }
