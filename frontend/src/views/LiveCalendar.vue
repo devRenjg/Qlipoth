@@ -43,7 +43,7 @@
               </div>
               <div class="sess-metric">
                 <span v-if="s.anchor_name" class="anchor">{{ s.anchor_name }}</span>
-                <span v-if="s.report_info?.creator" class="anchor">报备人 {{ s.report_info.creator }}</span>
+                <span v-if="s.report_info?.creator" class="anchor">报备人 {{ s.report_info.creator }}<template v-if="s.report_info?.creator_first_dept">（{{ s.report_info.creator_first_dept }}）</template></span>
                 <span v-if="s.pcu!=null && hasPeakTime(s)" class="peak-time">峰值 {{ hhmm(s.session_time) }}</span>
                 <span v-if="s.pcu!=null" class="pcu" :class="{ 'pcu-dirty': isDirty(s) }">PCU {{ fmt(s.pcu) }}</span>
                 <span v-if="isDirty(s)" class="dirty-tag" title="PCU疑似口径异常">⚠️脏数据</span>
@@ -135,6 +135,7 @@
           <div class="d-row" v-if="detail.report_info.real_origin"><span class="d-lbl">真原画露出</span><span>{{ detail.report_info.real_origin }}</span></div>
           <div class="d-row" v-if="detail.report_info.default_origin"><span class="d-lbl">默认原画清晰度</span><span>{{ detail.report_info.default_origin }}</span></div>
           <div class="d-row"><span class="d-lbl">报备人</span><span>{{ detail.report_info.creator || '—' }}</span></div>
+          <div class="d-row" v-if="detail.report_info.creator_dept"><span class="d-lbl">所属部门</span><span>{{ detail.report_info.creator_dept }}</span></div>
           <div class="d-row" v-if="isAdmin && detail.report_info.order_id && SHENPI_URL">
             <span class="d-lbl">审批单据</span>
             <a class="rb-link" :href="SHENPI_URL + detail.report_info.order_id" target="_blank" rel="noopener">打开原单据校准 ↗</a>
