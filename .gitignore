@@ -65,3 +65,17 @@ backend/eval/*_truth.local.json
 # 前端本地环境变量(含内部域名等，不公开)
 frontend/.env.local
 frontend/.env.*.local
+
+# 内部业务分析/体检/规划文档(含真实房间号/PCU/战队热度等，本地保留不公开)
+backend/*.md
+product_planning_live_assurance.md
+# 一次性数据标记备份/ID快照(含真实业务ID与数值)
+backend/_mark_*.json
+backend/_report_revert_scheme1.md
+backend/_revert_to_scheme1_backup.json
+backend/_v3*.txt
+backend/livecal_dup_analysis.json
+# 运行日志(评测/重导批次输出)
+backend/*.out
+# 前端一次性报告草稿
+frontend/.report_*.md
