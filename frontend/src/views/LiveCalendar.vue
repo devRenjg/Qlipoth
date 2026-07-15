@@ -111,6 +111,7 @@
         <div class="d-row" v-if="(detail.pcu!=null && hasPeakTime(detail)) || (detail.pcu==null && showStartTime(detail))"><span class="d-lbl">{{ detail.pcu!=null ? 'PCU 峰值' : '开播时间' }}</span><span>{{ detail.session_time }}</span></div>
         <div class="d-row" v-if="detail.anchor_name"><span class="d-lbl">主播</span><span>{{ detail.anchor_name }}</span></div>
         <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">PCU</span><span :class="{ 'v-dirty': isDirty(detail) }">{{ fmt(detail.pcu) }}<i v-if="isDirty(detail)" class="v-dirty-note">（脏数据，疑似口径异常）</i></span></div>
+        <div class="d-row" v-if="detail.ott_pcu!=null"><span class="d-lbl d-lbl-wide">OTT 大屏 PCU</span><span class="v-ott">{{ fmt(detail.ott_pcu) }}<i class="v-ott-note">（大屏端峰值，长连接口径未去重，独立于 App/Web）</i></span></div>
         <div class="d-row" v-if="detail.reservation!=null"><span class="d-lbl">预约数</span><span>{{ fmt(detail.reservation) }}</span></div>
         <div class="d-metric" v-if="hasDual(detail.watch_hours_fans, detail.watch_hours_all)">
           <div class="m-title">累计观看时长</div>
@@ -697,6 +698,9 @@ onBeforeUnmount(() => {
 .detail .dirty-banner .db-note { font-size:12.5px; font-weight:400; line-height:1.55; margin-top:6px; opacity:.95; }
 .detail .v-dirty { color:#c0392b; text-decoration:line-through; text-decoration-color:#c0392b; }
 .detail .v-dirty-note { font-style:normal; color:#c0392b; font-size:12px; margin-left:6px; text-decoration:none; font-weight:600; }
+.detail .d-lbl-wide { width:auto; min-width:80px; white-space:nowrap; margin-right:8px; }
+.detail .v-ott { color:#8e44ad; font-weight:600; }
+.detail .v-ott-note { font-style:normal; color:#909399; font-size:11px; margin-left:6px; font-weight:400; }
 /* 当天弹窗:脏数据提示行 + PCU删除线 + 灰底 */
 .dd-sess.dirty { border-left-color:#c0392b; background:#faf5f5; box-shadow:0 0 0 1px #e0b4b0 inset; }
 .dd-dirty-hint { margin-top:6px; margin-bottom:2px; font-size:12px; color:#a03228; background:#fdeceb; border-left:3px solid #c0392b; border-radius:4px; padding:6px 10px; line-height:1.5; }
