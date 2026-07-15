@@ -662,7 +662,7 @@ onBeforeUnmount(() => {
 
 .sess-metric .peak-time { color:#2f6bd6; font-weight:600; }
 .sess-metric .pcu { color: #b3701a; font-weight: 600; }
-.sess-metric .ott-pcu { color: #8e44ad; font-weight: 600; }
+.sess-metric .ott-pcu { color: #8e44ad; font-weight: 800; font-size: 14px; }
 .sess-metric .rsv { color: #2f9e5e; font-weight: 700; font-size: 14px; }
 /* 白名单官号(次级高优):淡化处理——明显高于普通、但低于百万级mega */
 .sess.vip { border-left:4px solid #f0a852 !important; background:linear-gradient(135deg,#fff8ec,#fff1d8) !important; box-shadow:0 0 0 1px #f3c98a inset; }
