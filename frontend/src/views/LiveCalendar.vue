@@ -62,6 +62,7 @@
                 <span v-if="s.report_info?.creator" class="anchor">报备人 {{ s.report_info.creator }}<template v-if="s.report_info?.creator_first_dept">（{{ s.report_info.creator_first_dept }}）</template></span>
                 <span v-if="s.pcu!=null && hasPeakTime(s)" class="peak-time">峰值 {{ hhmm(s.session_time) }}</span>
                 <span v-if="s.pcu!=null" class="pcu" :class="{ 'pcu-dirty': isDirty(s) }">PCU {{ fmt(s.pcu) }}</span>
+                <span v-if="s.ott_pcu!=null" class="ott-pcu">OTT PCU {{ fmt(s.ott_pcu) }}</span>
                 <span v-if="isDirty(s)" class="dirty-tag" title="PCU疑似口径异常">⚠️脏数据</span>
                 <span v-if="s.reservation!=null" class="rsv">预约 {{ fmt(s.reservation) }}</span>
                 <span v-if="s.is_report" class="report-tag" :class="{ 'report-tag-pending': s.report_info?.order_type==='审批中' }" :title="reportTagTitle(s)">{{ s.report_info?.order_type==='审批中' ? '审批中' : '已报备' }}{{ s.report_info?.pcu_display ? '·预估PCU '+s.report_info.pcu_display : '' }}</span>
@@ -92,6 +93,7 @@
             <span v-if="s.pcu!=null && hasPeakTime(s)" class="dd-chip time">峰值 {{ hhmm(s.session_time) }}</span>
             <span v-else-if="s.pcu==null" class="dd-chip time">开播 {{ hhmm(s.session_time) }}</span>
             <span v-if="s.pcu!=null" class="dd-chip pcu" :class="{ 'pcu-dirty': isDirty(s) }">PCU {{ fmt(s.pcu) }}</span>
+            <span v-if="s.ott_pcu!=null" class="dd-chip ott-pcu">OTT PCU {{ fmt(s.ott_pcu) }}</span>
             <span v-if="s.reservation!=null" class="dd-chip rsv">预约 {{ fmt(s.reservation) }}</span>
             <a v-if="s.room_id && s.room_url" class="dd-chip room room-link" :href="s.room_url" target="_blank" rel="noopener" @click.stop>房间 {{ s.room_id }} ↗</a>
             <span v-else-if="s.room_id" class="dd-chip room">房间 {{ s.room_id }}</span>
@@ -111,7 +113,7 @@
         <div class="d-row" v-if="(detail.pcu!=null && hasPeakTime(detail)) || (detail.pcu==null && showStartTime(detail))"><span class="d-lbl">{{ detail.pcu!=null ? 'PCU 峰值' : '开播时间' }}</span><span>{{ detail.session_time }}</span></div>
         <div class="d-row" v-if="detail.anchor_name"><span class="d-lbl">主播</span><span>{{ detail.anchor_name }}</span></div>
         <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">PCU</span><span :class="{ 'v-dirty': isDirty(detail) }">{{ fmt(detail.pcu) }}<i v-if="isDirty(detail)" class="v-dirty-note">（脏数据，疑似口径异常）</i></span></div>
-        <div class="d-row" v-if="detail.ott_pcu!=null"><span class="d-lbl d-lbl-wide">OTT PCU</span><span class="v-ott">{{ fmt(detail.ott_pcu) }}<i class="v-ott-note">（大屏端峰值，长连接口径未去重，独立于 App/Web）</i></span></div>
+        <div class="d-row" v-if="detail.ott_pcu!=null"><span class="d-lbl">OTT PCU</span><span class="v-ott">{{ fmt(detail.ott_pcu) }}</span></div>
         <div class="d-row" v-if="detail.reservation!=null"><span class="d-lbl">预约数</span><span>{{ fmt(detail.reservation) }}</span></div>
         <div class="d-metric" v-if="hasDual(detail.watch_hours_fans, detail.watch_hours_all)">
           <div class="m-title">累计观看时长</div>
@@ -660,6 +662,7 @@ onBeforeUnmount(() => {
 
 .sess-metric .peak-time { color:#2f6bd6; font-weight:600; }
 .sess-metric .pcu { color: #b3701a; font-weight: 600; }
+.sess-metric .ott-pcu { color: #8e44ad; font-weight: 600; }
 .sess-metric .rsv { color: #2f9e5e; font-weight: 700; font-size: 14px; }
 /* 白名单官号(次级高优):淡化处理——明显高于普通、但低于百万级mega */
 .sess.vip { border-left:4px solid #f0a852 !important; background:linear-gradient(135deg,#fff8ec,#fff1d8) !important; box-shadow:0 0 0 1px #f3c98a inset; }
@@ -721,6 +724,7 @@ onBeforeUnmount(() => {
 .dd-chip.anchor { background: #f0edfb; color: #7a6ad0; }
 .dd-chip.time { background: #eaf1fc; color: #2f6bd6; }
 .dd-chip.pcu { background: #fdf1e2; color: #b3701a; }
+.dd-chip.ott-pcu { background: #f3ebfa; color: #8e44ad; }
 .dd-chip.rsv { background: #eaf7ef; color: #2f9e5e; }
 .dd-chip.room { background: #f4f4f5; color: #707684; }
 .dd-chip.room-link { cursor: pointer; text-decoration: none; transition: all .15s; }
