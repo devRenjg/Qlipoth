@@ -3,6 +3,16 @@
     <div class="lc-head">
       <div class="lc-title-row">
         <h2>📅 直播日历</h2>
+        <el-button
+          class="caliber-btn"
+          type="warning"
+          plain
+          @click="caliberDialog = true"
+          aria-label="查看 PCU 与 OTT PCU 的数据口径说明"
+        >
+          <span class="caliber-icon" aria-hidden="true">📊</span>
+          数据口径说明
+        </el-button>
         <el-tooltip v-if="isLoggedIn" :content="reportRefreshTooltip" placement="bottom">
           <span class="refresh-report-trigger" @click="refreshReports">
             <el-button
@@ -100,6 +110,55 @@
           </div>
         </div>
       </div>
+    </el-dialog>
+
+    <!-- PCU / OTT PCU 数据口径说明 -->
+    <el-dialog v-model="caliberDialog" title="📊 数据口径说明" width="680px" top="7vh" class="caliber-dialog">
+      <div class="cal-body">
+        <p class="cal-intro">
+          日历里过去场次的「PCU」取自数仓，受<strong>数据表保留期</strong>限制，不同<strong>开播日期</strong>会落到不同的源表，口径并不完全一致。跨时间段的 PCU 数值<strong>不宜直接比大小</strong>，解读时请先对应下面的分段。
+        </p>
+
+        <section class="cal-sec">
+          <h4 class="cal-h">① 开播日期 ≥ 2026-04-01 — 长链在线人数峰值</h4>
+          <ul class="cal-ul">
+            <li>取自技术近实时长连表 <code>rods_s_broadcast_live_room_online_l_hr</code> 的<strong>在线人数峰值</strong>，时间显示为<strong>峰值时刻</strong>。</li>
+            <li>该口径为直播长连（TCP 长连接）上报的房间在线数，业务核心口径为<strong>登录用户按 mid 去重 + 风控过滤</strong>后的在线人数。</li>
+          </ul>
+        </section>
+
+        <section class="cal-sec">
+          <h4 class="cal-h">② 2024-05 至 2026-03（2024-05-01 ≤ 开播日期 &lt; 2026-04-01）— 历史长链表</h4>
+          <ul class="cal-ul">
+            <li>rods 表仅保留近 3 个月，更早日期改用历史落表 <code>dwd_prty_lvup_broadcast_live_room_online_i_hr</code> 的 <code>logic_count_real</code> 峰值。</li>
+            <li>其口径与①<strong>完全一致</strong>（登录 + mid 去重 + 风控过滤），换表只为拉长历史保留期，不改变口径含义。</li>
+          </ul>
+        </section>
+
+        <section class="cal-sec">
+          <h4 class="cal-h">③ 2024-05 之前（开播日期 &lt; 2024-05-01）— 老版弹幕连接数</h4>
+          <ul class="cal-ul">
+            <li>历史长链表最早只到 2024-05-01，更早的场次改用场次日表 <code>dwd_live_room_broadcast_session_d</code> 的 <code>danmu_num</code>（弹幕连接数）作为 PCU，取当天值，<strong>无峰值时刻</strong>。</li>
+            <li>此口径<strong>不做登录/mid 去重、不过风控</strong>，是连接层的“粗”口径，数值口径与①②<strong>不可比</strong>，仅作历史趋势参考。</li>
+          </ul>
+        </section>
+
+        <section class="cal-sec cal-ott">
+          <h4 class="cal-h">④ OTT PCU（大屏 / TV 端）</h4>
+          <ul class="cal-ul">
+            <li>来自 OTT 数仓 <code>dwd_live_tv_pcu_detail_l_d</code> 的 <code>online</code>，是电视大屏端<strong>独立</strong>的在线人数上报体系。</li>
+            <li>与 App / Web 主端<strong>不是同一个直播间</strong>（房间号不通用），也<strong>不与主端 PCU 打通</strong>。</li>
+            <li>OTT PCU 与前三种主端 PCU <strong>相互独立、不可相加</strong>，需单独查看。</li>
+          </ul>
+        </section>
+
+        <p class="cal-note">
+          ⚠️ 分段是因为数仓表保留期不同（并非业务定义变更）；①② 口径一致、可比，③ 为老版粗口径、④ 为大屏独立口径，均<strong>不宜与①②直接比大小</strong>。
+        </p>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="caliberDialog = false">我知道了</el-button>
+      </template>
     </el-dialog>
 
     <!-- 单场详情抽屉 -->
@@ -214,6 +273,7 @@ const drawer = ref(false)
 const detail = ref(null)
 const dayDialog = ref(false)
 const dayCell = ref(null)
+const caliberDialog = ref(false)
 const dayTitle = computed(() => {
   if (!dayCell.value) return ''
   const n = dayCell.value.sessions.length
@@ -618,6 +678,22 @@ onBeforeUnmount(() => {
 .refresh-report-trigger :deep(.el-button.is-disabled) { pointer-events: none; }
 .refresh-report-btn { font-weight: 700; box-shadow: 0 3px 10px rgba(47, 107, 214, .28); }
 .refresh-icon { margin-right: 6px; }
+.caliber-btn { font-weight: 700; box-shadow: 0 3px 10px rgba(230, 162, 60, .22); }
+.caliber-icon { margin-right: 6px; }
+/* 数据口径说明弹窗 */
+.caliber-dialog .cal-body { font-size: 14px; color: #2f3f5c; line-height: 1.7; }
+.caliber-dialog .cal-intro { margin: 0 0 16px; padding: 10px 12px; background: #fff8ec; border-left: 3px solid #e6a23c; border-radius: 4px; color: #7a5a12; }
+.caliber-dialog .cal-sec { margin-bottom: 16px; }
+.caliber-dialog .cal-h { margin: 0 0 8px; font-size: 15px; color: #1a2b4a; }
+.caliber-dialog .cal-ott .cal-h { color: #8250c4; }
+.caliber-dialog .cal-ul { margin: 0; padding-left: 20px; }
+.caliber-dialog .cal-ul li { margin-bottom: 5px; }
+.caliber-dialog .cal-ul strong { color: #c0140a; font-weight: 700; margin: 0 3px; }
+.caliber-dialog .cal-ott .cal-ul strong { color: #8250c4; }
+.caliber-dialog .cal-todo { color: #909399; font-style: italic; }
+.caliber-dialog .cal-todo strong { color: #909399; }
+.caliber-dialog .cal-note { margin: 4px 0 0; padding: 10px 12px; background: #f4f5f7; border-radius: 4px; font-size: 13px; color: #606266; }
+.caliber-dialog code { padding: 1px 5px; background: #eef1f6; border: 1px solid #dfe4ec; border-radius: 3px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; color: #476582; word-break: break-all; }
 .lc-head .sub { color: #6b7a90; font-size: 13px; margin: 0 0 14px; }
 .lc-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
 .nav { display: inline-flex; flex-direction: column; align-items: stretch; gap: 8px; }
