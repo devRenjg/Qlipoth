@@ -662,7 +662,7 @@ onBeforeUnmount(() => {
 
 .sess-metric .peak-time { color:#2f6bd6; font-weight:600; }
 .sess-metric .pcu { color: #b3701a; font-weight: 600; }
-.sess-metric .ott-pcu { color: #8e44ad; font-weight: 600; }
+.sess-metric .ott-pcu { color: #b3701a; font-weight: 600; }
 .sess-metric .rsv { color: #2f9e5e; font-weight: 700; font-size: 14px; }
 /* 白名单官号(次级高优):淡化处理——明显高于普通、但低于百万级mega */
 .sess.vip { border-left:4px solid #f0a852 !important; background:linear-gradient(135deg,#fff8ec,#fff1d8) !important; box-shadow:0 0 0 1px #f3c98a inset; }
@@ -702,7 +702,7 @@ onBeforeUnmount(() => {
 .detail .v-dirty { color:#c0392b; text-decoration:line-through; text-decoration-color:#c0392b; }
 .detail .v-dirty-note { font-style:normal; color:#c0392b; font-size:12px; margin-left:6px; text-decoration:none; font-weight:600; }
 .detail .d-lbl-wide { width:auto; min-width:80px; white-space:nowrap; margin-right:8px; }
-.detail .v-ott { color:#8e44ad; font-weight:600; }
+.detail .v-ott { color:inherit; font-weight:inherit; }
 .detail .v-ott-note { font-style:normal; color:#909399; font-size:11px; margin-left:6px; font-weight:400; }
 /* 当天弹窗:脏数据提示行 + PCU删除线 + 灰底 */
 .dd-sess.dirty { border-left-color:#c0392b; background:#faf5f5; box-shadow:0 0 0 1px #e0b4b0 inset; }
@@ -724,7 +724,7 @@ onBeforeUnmount(() => {
 .dd-chip.anchor { background: #f0edfb; color: #7a6ad0; }
 .dd-chip.time { background: #eaf1fc; color: #2f6bd6; }
 .dd-chip.pcu { background: #fdf1e2; color: #b3701a; }
-.dd-chip.ott-pcu { background: #f3ebfa; color: #8e44ad; }
+.dd-chip.ott-pcu { background: #fdf1e2; color: #b3701a; }
 .dd-chip.rsv { background: #eaf7ef; color: #2f9e5e; }
 .dd-chip.room { background: #f4f4f5; color: #707684; }
 .dd-chip.room-link { cursor: pointer; text-decoration: none; transition: all .15s; }
