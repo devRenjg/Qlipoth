@@ -668,7 +668,7 @@ onBeforeUnmount(() => {
 .sess.vip { border-left:4px solid #f0a852 !important; background:linear-gradient(135deg,#fff8ec,#fff1d8) !important; box-shadow:0 0 0 1px #f3c98a inset; }
 .sess.vip .sess-title { font-size:13px; font-weight:600; color:#b5722a; }
 .sess.vip .anchor { color:#c07a28 !important; font-weight:600; }
-.sess.vip .pcu, .sess.vip .rsv { font-weight:600; }
+.sess.vip .pcu, .sess.vip .ott-pcu, .sess.vip .rsv { font-weight:600; }
 /* 报备场次:蓝底突出(优先级最高的视觉强调) */
 .sess.report { border-left:4px solid #2f6bd6 !important; background:linear-gradient(135deg,#eaf2ff,#d6e6ff) !important; box-shadow:0 0 0 1px #a8c6f0 inset; }
 .sess.report .sess-title { font-weight:700; color:#1e4fa3; }
@@ -682,7 +682,7 @@ onBeforeUnmount(() => {
 .sess.mega { border-left:5px solid #e01f1f !important; background:linear-gradient(135deg,#ffe08a,#ff9d5c,#ff6b6b) !important; box-shadow:0 0 0 2px #ff3b3b inset, 0 0 12px rgba(255,60,60,.55); }
 .sess.mega .sess-title { font-size:14px; font-weight:800; color:#7a1010; }
 .sess.mega .anchor { color:#a01515 !important; font-weight:800; }
-.sess.mega .pcu { color:#c0140a !important; font-weight:900; }
+.sess.mega .pcu, .sess.mega .ott-pcu { color:#c0140a !important; font-weight:900; }
 .mega-badge { font-size:15px; margin-right:3px; filter:drop-shadow(0 0 3px rgba(255,80,0,.6)); }
 /* 持续流标注:格子内小灰标签 + 弹窗内提示行 */
 .cont-flow-tag { display:inline-block; margin-left:5px; font-size:10px; font-weight:600; color:#8a7500; background:#fff5cc; border:1px solid #ecd98a; border-radius:6px; padding:0 5px; vertical-align:middle; white-space:nowrap; }
