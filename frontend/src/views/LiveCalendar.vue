@@ -111,7 +111,7 @@
         <div class="d-row" v-if="(detail.pcu!=null && hasPeakTime(detail)) || (detail.pcu==null && showStartTime(detail))"><span class="d-lbl">{{ detail.pcu!=null ? 'PCU 峰值' : '开播时间' }}</span><span>{{ detail.session_time }}</span></div>
         <div class="d-row" v-if="detail.anchor_name"><span class="d-lbl">主播</span><span>{{ detail.anchor_name }}</span></div>
         <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">PCU</span><span :class="{ 'v-dirty': isDirty(detail) }">{{ fmt(detail.pcu) }}<i v-if="isDirty(detail)" class="v-dirty-note">（脏数据，疑似口径异常）</i></span></div>
-        <div class="d-row" v-if="detail.ott_pcu!=null"><span class="d-lbl d-lbl-wide">OTT 大屏 PCU</span><span class="v-ott">{{ fmt(detail.ott_pcu) }}<i class="v-ott-note">（大屏端峰值，长连接口径未去重，独立于 App/Web）</i></span></div>
+        <div class="d-row" v-if="detail.ott_pcu!=null"><span class="d-lbl d-lbl-wide">OTT PCU</span><span class="v-ott">{{ fmt(detail.ott_pcu) }}<i class="v-ott-note">（大屏端峰值，长连接口径未去重，独立于 App/Web）</i></span></div>
         <div class="d-row" v-if="detail.reservation!=null"><span class="d-lbl">预约数</span><span>{{ fmt(detail.reservation) }}</span></div>
         <div class="d-metric" v-if="hasDual(detail.watch_hours_fans, detail.watch_hours_all)">
           <div class="m-title">累计观看时长</div>
