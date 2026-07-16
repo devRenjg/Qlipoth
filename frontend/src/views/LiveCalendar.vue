@@ -672,7 +672,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .lc { max-width: 100%; margin: 0 auto; padding: 8px 8px 40px; box-sizing: border-box; overflow-x: hidden; }
-.lc-title-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 4px; }
+.lc-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 4px; }
 .lc-head h2 { margin: 0; font-size: 22px; color: #1a2b4a; }
 .refresh-report-trigger { display: inline-flex; flex-shrink: 0; margin-left: auto; }
 .refresh-report-trigger :deep(.el-button.is-disabled) { pointer-events: none; }
