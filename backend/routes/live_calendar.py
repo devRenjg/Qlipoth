@@ -178,7 +178,7 @@ async def list_sessions(start: str, end: str, user: dict = Depends(require_login
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         rows = await (await db.execute(
-            "SELECT id, session_time, title, anchor_name, pcu, reservation, room_id, "
+            "SELECT id, session_time, title, anchor_name, pcu, pcu_business, reservation, room_id, "
             "watch_hours_fans, watch_hours_all, danmu_fans, danmu_all, "
             "enter_dau_fans, enter_dau_all, fans_growth_fans, fans_growth_all, "
             "is_report, report_info, is_dirty, dirty_note, ott_pcu "
@@ -193,6 +193,7 @@ async def list_sessions(start: str, end: str, user: dict = Depends(require_login
             "title": r["title"],
             "anchor_name": r["anchor_name"] or "",
             "pcu": r["pcu"],
+            "pcu_business": r["pcu_business"],
             "reservation": r["reservation"],
             "room_id": r["room_id"] or "",
             "room_url": _room_url(r["room_id"] or ""),

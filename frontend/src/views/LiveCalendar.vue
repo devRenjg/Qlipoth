@@ -102,7 +102,8 @@
             <span v-if="s.anchor_name" class="dd-chip anchor">{{ s.anchor_name }}</span>
             <span v-if="s.pcu!=null && hasPeakTime(s)" class="dd-chip time">峰值 {{ hhmm(s.session_time) }}</span>
             <span v-else-if="s.pcu==null" class="dd-chip time">开播 {{ hhmm(s.session_time) }}</span>
-            <span v-if="s.pcu!=null" class="dd-chip pcu" :class="{ 'pcu-dirty': isDirty(s) }">PCU {{ fmt(s.pcu) }}</span>
+            <span v-if="s.pcu!=null" class="dd-chip pcu" :class="{ 'pcu-dirty': isDirty(s) }">{{ hasBizPcu(s) ? '技术 PCU' : 'PCU' }} {{ fmt(s.pcu) }}</span>
+            <span v-if="hasBizPcu(s)" class="dd-chip pcu-biz" title="业务口径:登录用户 mid 去重 + 风控过滤后的在线人数">业务 PCU {{ fmt(s.pcu_business) }}</span>
             <span v-if="s.ott_pcu!=null" class="dd-chip ott-pcu">OTT PCU {{ fmt(s.ott_pcu) }}</span>
             <span v-if="s.reservation!=null" class="dd-chip rsv">预约 {{ fmt(s.reservation) }}</span>
             <a v-if="s.room_id && s.room_url" class="dd-chip room room-link" :href="s.room_url" target="_blank" rel="noopener" @click.stop>房间 {{ s.room_id }} ↗</a>
@@ -172,7 +173,8 @@
         <div v-else-if="isVip(detail)" class="vip-banner">★ 重点关注直播场次</div>
         <div class="d-row" v-if="(detail.pcu!=null && hasPeakTime(detail)) || (detail.pcu==null && showStartTime(detail))"><span class="d-lbl">{{ detail.pcu!=null ? 'PCU 峰值' : '开播时间' }}</span><span>{{ detail.session_time }}</span></div>
         <div class="d-row" v-if="detail.anchor_name"><span class="d-lbl">主播</span><span>{{ detail.anchor_name }}</span></div>
-        <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">PCU</span><span :class="{ 'v-dirty': isDirty(detail) }">{{ fmt(detail.pcu) }}<i v-if="isDirty(detail)" class="v-dirty-note">（脏数据，疑似口径异常）</i></span></div>
+        <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">{{ hasBizPcu(detail) ? '技术 PCU' : 'PCU' }}</span><span :class="{ 'v-dirty': isDirty(detail) }">{{ fmt(detail.pcu) }}<i v-if="hasBizPcu(detail)" class="v-cal-note">（长链原始在线，不去重不过风控）</i><i v-if="isDirty(detail)" class="v-dirty-note">（脏数据，疑似口径异常）</i></span></div>
+        <div class="d-row" v-if="hasBizPcu(detail)"><span class="d-lbl">业务 PCU</span><span>{{ fmt(detail.pcu_business) }}<i class="v-cal-note">（登录 mid 去重 + 风控过滤）</i></span></div>
         <div class="d-row" v-if="detail.ott_pcu!=null"><span class="d-lbl">OTT PCU</span><span class="v-ott">{{ fmt(detail.ott_pcu) }}</span></div>
         <div class="d-row" v-if="detail.reservation!=null"><span class="d-lbl">预约数</span><span>{{ fmt(detail.reservation) }}</span></div>
         <div class="d-metric" v-if="hasDual(detail.watch_hours_fans, detail.watch_hours_all)">
@@ -290,6 +292,10 @@ const hasPeakTime = (s) => {
   const hms = (s.session_time || '').slice(11, 19)
   return !!hms && hms !== '00:00:00'
 }
+// 是否展示技术/业务双口径 PCU:仅 2026-04-01 起的场次同时存了技术(pcu=origin)与
+// 业务(pcu_business=logic_count_real)两口径,此时详情区把 pcu 标注为「技术 PCU」并额外
+// 显示「业务 PCU」。更早分段只有单一口径,不显示业务口径,避免误导。
+const hasBizPcu = (s) => (s.session_time || '').slice(0, 10) >= '2026-04-01' && s.pcu_business != null
 // 千分位;空值显示 —。unit 追加单位(如 ' 小时')
 const ksep = (n, unit = '') => n == null ? '—' : Math.round(n).toLocaleString() + unit
 // 某维度是否有任一口径值(粉版或全端),决定该行是否显示
@@ -781,10 +787,12 @@ onBeforeUnmount(() => {
 .detail .d-lbl-wide { width:auto; min-width:80px; white-space:nowrap; margin-right:8px; }
 .detail .v-ott { color:inherit; font-weight:inherit; }
 .detail .v-ott-note { font-style:normal; color:#909399; font-size:11px; margin-left:6px; font-weight:400; }
+.detail .v-cal-note { font-style:normal; color:#909399; font-size:11px; margin-left:6px; font-weight:400; }
 /* 当天弹窗:脏数据提示行 + PCU删除线 + 灰底 */
 .dd-sess.dirty { border-left-color:#c0392b; background:#faf5f5; box-shadow:0 0 0 1px #e0b4b0 inset; }
 .dd-dirty-hint { margin-top:6px; margin-bottom:2px; font-size:12px; color:#a03228; background:#fdeceb; border-left:3px solid #c0392b; border-radius:4px; padding:6px 10px; line-height:1.5; }
 .dd-chip.pcu.pcu-dirty { text-decoration:line-through; text-decoration-color:#c0392b; color:#a0392b; opacity:.8; }
+.dd-chip.pcu-biz { background:#eef4ff; color:#3a6ea5; border:1px solid #cfe0f5; }
 /* 当天全部场次弹窗 */
 .day-detail { display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow-y: auto; }
 .dd-sess { border: 1px solid #e3e8f0; border-left: 4px solid #c0c4cc; border-radius: 8px; padding: 12px 14px; background: #fafbfd; }
