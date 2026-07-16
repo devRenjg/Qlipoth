@@ -120,18 +120,19 @@
         </p>
 
         <section class="cal-sec">
-          <h4 class="cal-h">① 开播日期 ≥ 2026-04-01 — 长链在线人数峰值</h4>
+          <h4 class="cal-h">① 开播日期 ≥ 2026-04-01 — 长链原始在线峰值（技术口径）</h4>
           <ul class="cal-ul">
-            <li>取自技术近实时长连表 <code>rods_s_broadcast_live_room_online_l_hr</code> 的<strong>在线人数峰值</strong>，时间显示为<strong>峰值时刻</strong>。</li>
-            <li>该口径为直播长连（TCP 长连接）上报的房间在线数，业务核心口径为<strong>登录用户按 mid 去重 + 风控过滤</strong>后的在线人数。</li>
+            <li>取自技术近实时长连表 <code>rods_s_broadcast_live_room_online_l_hr</code> 的 <code>origin</code> 列峰值，时间显示为<strong>峰值时刻</strong>。</li>
+            <li>该口径为直播长连（TCP 长连接）上报的<strong>原始在线连接数</strong>，<strong>不做 mid 去重、不过风控</strong>，含登录 + 未登录用户，站在<strong>技术保障</strong>视角反映服务端实际承载的连接压力。</li>
+            <li>因未去重，数值通常<strong>高于</strong>业务口径（登录去重）的在线人数。</li>
           </ul>
         </section>
 
         <section class="cal-sec">
-          <h4 class="cal-h">② 2024-05 至 2026-03（2024-05-01 ≤ 开播日期 &lt; 2026-04-01）— 历史长链表</h4>
+          <h4 class="cal-h">② 2024-05 至 2026-03（2024-05-01 ≤ 开播日期 &lt; 2026-04-01）— 历史长链表（业务去重口径）</h4>
           <ul class="cal-ul">
             <li>rods 表仅保留近 3 个月，更早日期改用历史落表 <code>dwd_prty_lvup_broadcast_live_room_online_i_hr</code> 的 <code>logic_count_real</code> 峰值。</li>
-            <li>其口径与①<strong>完全一致</strong>（登录 + mid 去重 + 风控过滤），换表只为拉长历史保留期，不改变口径含义。</li>
+            <li>该列口径为<strong>登录用户 mid 去重 + 风控过滤</strong>后的在线人数，属<strong>业务口径</strong>，与①的技术原始口径<strong>不一致</strong>——同场景下通常<strong>小于</strong>①，历史数据未按新口径重刷，跨①②比大小需谨慎。</li>
           </ul>
         </section>
 
@@ -139,7 +140,7 @@
           <h4 class="cal-h">③ 2024-05 之前（开播日期 &lt; 2024-05-01）— 老版弹幕连接数</h4>
           <ul class="cal-ul">
             <li>历史长链表最早只到 2024-05-01，更早的场次改用场次日表 <code>dwd_live_room_broadcast_session_d</code> 的 <code>danmu_num</code>（弹幕连接数）作为 PCU，取当天值，<strong>无峰值时刻</strong>。</li>
-            <li>此口径<strong>不做登录/mid 去重、不过风控</strong>，是连接层的“粗”口径，数值口径与①②<strong>不可比</strong>，仅作历史趋势参考。</li>
+            <li>此口径<strong>不做登录/mid 去重、不过风控</strong>，虽同为不去重的连接层口径，但来源是弹幕连接而非长链在线，与①②<strong>不可直接比大小</strong>，仅作历史趋势参考。</li>
           </ul>
         </section>
 
@@ -153,7 +154,7 @@
         </section>
 
         <p class="cal-note">
-          ⚠️ 分段是因为数仓表保留期不同（并非业务定义变更）；①② 口径一致、可比，③ 为老版粗口径、④ 为大屏独立口径，均<strong>不宜与①②直接比大小</strong>。
+          ⚠️ 分段是因为数仓表保留期不同；① 为<strong>技术保障口径</strong>（长链原始连接、不去重），② 为<strong>业务去重口径</strong>（登录 mid 去重 + 风控），③ 为老版弹幕粗口径、④ 为大屏独立口径。四段口径来源不同，<strong>跨段不宜直接比大小</strong>，解读请先对应所属分段。
         </p>
       </div>
       <template #footer>

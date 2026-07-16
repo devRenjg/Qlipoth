@@ -226,4 +226,13 @@ async def init_db():
                 await db.execute(ddl)
             except Exception:
                 pass
+        # live_sessions 增量字段：pcu 存技术口径(origin,展示用),pcu_business 存业务去重口径
+        # (logic_count_real)备用。历史扩展列(ott_pcu/is_dirty 等)由运维脚本 ALTER,此处补登记新列。
+        for col, ddl in [
+            ("pcu_business", "ALTER TABLE live_sessions ADD COLUMN pcu_business INTEGER"),
+        ]:
+            try:
+                await db.execute(ddl)
+            except Exception:
+                pass
         await db.commit()
