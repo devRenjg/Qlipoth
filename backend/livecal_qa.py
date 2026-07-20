@@ -66,6 +66,19 @@ _S_SEASON_YEAR = {
 }
 
 
+# 英雄联盟官方赛事直播间。S赛/MSI/LPL/LCK 等官方赛事均在此间开播,间名 2022-2026 稳定(已核实)。
+# 命中 LoL 赛事问题时把查询锁定到此间,排除民间解说/转播间——后者标题也含"S15"等赛事标识,
+# 曾把 50万级转播场排到官方 499万决赛场前面,导致"S15最高PCU"答错(答成"老实憨厚的笑")。
+_LOL_ESPORTS_ANCHOR = "哔哩哔哩英雄联盟赛事"
+# LoL 赛事强信号:英雄联盟/LPL/LCK/MSI 或 S届次(S10-S16)
+_LOL_ESPORTS_RE = re.compile(r'英雄联盟|LPL|LCK|MSI|(?<![A-Za-z0-9])S1[0-6](?![0-9])', re.I)
+
+
+def _is_lol_esports_q(q: str) -> bool:
+    """问题是否明确指向英雄联盟官方赛事(S赛/MSI/LPL/LCK)。"""
+    return bool(_LOL_ESPORTS_RE.search(q or ""))
+
+
 def _extract_years(q: str) -> list[str]:
     """抽取问题里的年份(2020-2029);并把 S赛届次映射成对应年份补入。"""
     years = re.findall(r'20[2-9]\d', q or "")
@@ -94,6 +107,10 @@ def _extract_like_terms(q: str) -> list[str]:
         terms.append(m.upper())
     # 战队大写缩写(2-4位字母,如 T1/EDG/BLG/RNG/JDG),排除纯英文常用词
     for m in re.findall(r'\b[A-Z0-9]{2,4}\b', q):
+        # S届次(S10-S16)已在 _extract_years 映射成年份,绝不能当 LIKE 词:官方赛事场标题是
+        # "决赛 KT 2:3 T1"不含"S15"字样,LIKE '%S15%' 会把官方场滤掉、只留民间转播间(标题带S15)。
+        if re.fullmatch(r'S\d{1,2}', m, re.I):
+            continue
         if m.upper() not in ("PCU", "DAU", "MSI", "LPL", "LCK"):
             terms.append(m)
     # T1 特殊(数字结尾,后常接中文,不用 \b 尾边界)
@@ -148,9 +165,14 @@ async def fetch_livecal_context(q: str, limit: int = 15) -> str | None:
     """
     years = _extract_years(q)
     terms = _extract_like_terms(q)
+    lol_esports = _is_lol_esports_q(q)
 
-    where = ["pcu IS NOT NULL", "pcu > 0", "title NOT LIKE '%预告%'"]
+    where = ["pcu IS NOT NULL", "pcu > 0", "title NOT LIKE '%预告%'", "COALESCE(hidden, 0) = 0"]
     params: list = []
+    # LoL 官方赛事问题 → 锁定官方赛事间,排除民间解说/转播间(它们标题也带 S15 等标识,会抢榜首)
+    if lol_esports:
+        where.append("anchor_name = ?")
+        params.append(_LOL_ESPORTS_ANCHOR)
     # 年份过滤(任一年份)
     if years:
         ors = []
@@ -166,8 +188,8 @@ async def fetch_livecal_context(q: str, limit: int = 15) -> str | None:
             params += [f"%{t}%", f"%{t}%"]
         where.append("(" + " OR ".join(ors) + ")")
 
-    # 既无年份也无关键词 → 线索不足,不强查(交回知识库更稳)
-    if not years and not terms:
+    # 既无年份也无关键词也非LoL赛事 → 线索不足,不强查(交回知识库更稳)
+    if not years and not terms and not lol_esports:
         return None
 
     sql = (f"SELECT session_time,title,anchor_name,pcu,reservation,room_id,"
