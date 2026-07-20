@@ -432,6 +432,7 @@ const MIN_SHOW = 10000  // 展示门槛:过去PCU<1w、未来预约<1w 默认不
 // 组织某天要展示的场次:过滤低量 + 报备优先 + 同直播间合并(报备挂到指标/预约场次上)
 function buildDaySessions(key) {
   const all = sessions.value.filter(s => (s.session_time || '').slice(0, 10) === key)
+  const isPast = key < ymd(new Date())   // 该天是否已过去(严格早于今天;今天及未来不算)
   const reports = all.filter(s => s.is_report)
   const normal = all.filter(s => !s.is_report)
   // 合并:同 room_id 的报备信息挂到普通场次上;未被合并的报备单独成条
@@ -454,8 +455,11 @@ function buildDaySessions(key) {
       if (!s.title || !s.title.trim()) return false
       return s.pcu >= MIN_SHOW          // 低量门槛:过去 PCU<1w 不展示(含报备场次)
     }
-    // 未开播场次:报备(未来直播计划,需提前预判保障)始终展示
-    if (s.is_report || s.report_info) return true
+    // 报备场次(未开播):
+    //   未来/今天 → 未来直播计划,需提前预判保障,始终展示。
+    //   过去 → 已发生却拿不到真实 PCU(如测试推流链路不进技术长链表),
+    //          既非<1w也非≥1w、无有效热度可显示,按"无数据"处理不展示,不占位。
+    if (s.is_report || s.report_info) return !isPast
     if (s.reservation != null) return s.reservation >= MIN_SHOW   // 未来纯预约<1w 不展示
     return true
   })
