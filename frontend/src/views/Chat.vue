@@ -169,8 +169,13 @@
   </div>
 </template>
 
+<script>
+// 显式声明组件名，供 App.vue 的 <keep-alive :include="['Chat']"> 精确匹配（缓存问答页）
+export default { name: 'Chat' }
+</script>
+
 <script setup>
-import { ref, inject, nextTick, onMounted, computed } from 'vue'
+import { ref, inject, nextTick, onMounted, onActivated, computed, watch } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 import { queryKnowledgeBaseStream, getConversations, getConversation, saveChatHistory, getTags } from '../api/index.js'
 import { addProfilingRecord } from '../store/profiling.js'
@@ -197,7 +202,76 @@ const presetQuestions = [
   '示例需求上线后的版本覆盖率多少，对比上次如何？',
 ]
 
-onMounted(() => { loadConversations(); loadTags() })
+// —— 当前对话本地持久化：切 Tab(keep-alive)已能保住内存态；此处再抗刷新/关页重开 ——
+// 按当前用户隔离 key(currentUser 已在上方 inject)，避免同机不同账号/访客串对话。
+function draftKey() {
+  const uid = currentUser?.value?.id ?? 'guest'
+  return `qlipoth_chat_draft_${uid}`
+}
+
+function saveDraft() {
+  try {
+    // 不持久化 loading：重开后不再假装"生成中"。html 可由 text 重建，故只存原始字段。
+    const slim = messages.value.map(m => ({
+      role: m.role,
+      text: m.text,
+      sourceUrls: m.sourceUrls || [],
+      images: m.images || [],
+      timing: m.timing || null,
+    }))
+    const payload = { messages: slim, conversationId: conversationId.value, selectedTagIds: selectedTagIds.value }
+    localStorage.setItem(draftKey(), JSON.stringify(payload))
+  } catch { /* 持久化失败不影响主流程 */ }
+}
+
+function restoreDraft() {
+  try {
+    const raw = localStorage.getItem(draftKey())
+    if (!raw) return false
+    const d = JSON.parse(raw)
+    if (!d || !Array.isArray(d.messages) || !d.messages.length) return false
+    const msgs = d.messages.map(m => ({
+      role: m.role,
+      text: m.text || '',
+      html: m.role === 'assistant' ? formatMarkdown(m.text || '') : '',
+      sourceUrls: m.sourceUrls || [],
+      images: m.images || [],
+      timing: m.timing || null,
+    }))
+    // 末条助手消息为空 = 上次生成中被刷新/关页打断、从未落库，明确提示而非留空白气泡。
+    const last = msgs[msgs.length - 1]
+    if (last && last.role === 'assistant' && !last.text) {
+      last.text = '（上次回答生成被中断，请重新提问）'
+      last.html = formatMarkdown(last.text)
+    }
+    messages.value = msgs
+    conversationId.value = d.conversationId || null
+    selectedTagIds.value = Array.isArray(d.selectedTagIds) ? d.selectedTagIds : []
+    return true
+  } catch { return false }
+}
+
+function clearDraft() {
+  try { localStorage.removeItem(draftKey()) } catch {}
+}
+
+onMounted(() => {
+  // 内存空(首次进入/刷新重开)时尝试恢复本地草稿；keep-alive 切回不会走 onMounted。
+  if (!messages.value.length) restoreDraft()
+  loadConversations()
+  loadTags()
+})
+
+// keep-alive 激活(切回 Tab):内存态本就还在,无需恢复;仅回到底部改善体验。
+onActivated(() => { scrollToBottom() })
+
+// 对话内容/会话/标签变化 → 写本地草稿。流式生成时 chunk 高频触发，做 300ms 防抖降低写入频率。
+let saveTimer = null
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(saveDraft, 300)
+}
+watch([messages, conversationId, selectedTagIds], scheduleSave, { deep: true })
 
 async function loadConversations() {
   try {
@@ -250,6 +324,7 @@ function newChat() {
   messages.value = []
   conversationId.value = null
   input.value = ''
+  clearDraft()  // 清掉本地草稿，新对话不残留上一段
 }
 
 function askPreset(q) {

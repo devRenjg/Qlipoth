@@ -80,7 +80,12 @@
       </div>
     </el-header>
     <el-main class="app-main" :class="{ 'full-width': isChatPage, 'wide-width': isWidePage }">
-      <router-view />
+      <!-- 智能问答页做组件缓存：切 Tab 不销毁，切回来对话原样保留、生成中不中断 -->
+      <router-view v-slot="{ Component }">
+        <keep-alive :include="['Chat']">
+          <component :is="Component" />
+        </keep-alive>
+      </router-view>
     </el-main>
   </el-container>
 </template>
