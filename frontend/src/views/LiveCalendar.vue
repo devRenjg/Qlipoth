@@ -444,15 +444,18 @@ function buildDaySessions(key) {
     return s
   })
   for (const r of reports) if (!usedReport.has(r.id)) merged.push(r)
-  // 过滤:报备场次始终展示;其余按规则过滤
+  // 过滤规则:过去已开播场次(有PCU)一律按实际热度论,未开播的报备场次才始终展示
   const kept = merged.filter(s => {
-    if (s.is_report || s.report_info) return true
-    // 过去场次(有PCU):PCU<=0(数据源无有效流水) 或 空标题(源表无标题) 不展示——脏/残缺数据不上日历
+    // 过去已开播场次(PCU 非空):无论是否报备,一律走 PCU 门槛。
+    // PCU<=0(数据源无有效流水) / 空标题(源表无标题) / PCU<1w(低量) 均不展示。
+    // 报备一旦开播取到 PCU,其"未来保障预判"意义已消失,按实际 PCU 论,低量不占位。
     if (s.pcu != null) {
       if (s.pcu <= 0) return false
       if (!s.title || !s.title.trim()) return false
-      return s.pcu >= MIN_SHOW          // 低量门槛:过去PCU<1w 不展示
+      return s.pcu >= MIN_SHOW          // 低量门槛:过去 PCU<1w 不展示(含报备场次)
     }
+    // 未开播场次:报备(未来直播计划,需提前预判保障)始终展示
+    if (s.is_report || s.report_info) return true
     if (s.reservation != null) return s.reservation >= MIN_SHOW   // 未来纯预约<1w 不展示
     return true
   })
