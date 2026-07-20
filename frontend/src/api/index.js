@@ -169,3 +169,10 @@ export function deleteChecklist(id) {
 export function exportChecklistToWecom(id, itemIds, title) {
   return api.post(`/checklist/${id}/export-wecom`, { item_ids: itemIds || [], title: title || null }, { timeout: 120000 })
 }
+
+// 埋点上报：action 命中后端白名单(访问页面/查看内容)；fire-and-forget，失败不打扰用户
+export function trackActivity(action, detail) {
+  try {
+    api.post('/activity/track', { action, detail: detail || '' }).catch(() => {})
+  } catch { /* 埋点绝不影响主流程 */ }
+}

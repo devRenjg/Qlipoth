@@ -154,6 +154,7 @@ import { ref, computed, onMounted, onUnmounted, inject } from 'vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import { TAG_TO_ICON } from '../dimensions.js'
+import { trackActivity } from '../api'
 
 const api = axios.create({ baseURL: '/api' })
 const currentUser = inject('currentUser')
@@ -264,6 +265,7 @@ async function pollIfGenerating() {
 }
 
 function viewDoc(doc) {
+  trackActivity('查看内容', `作战地图文档 ${doc.title || doc.path || ''}`)
   // 优先跳原始企微/info 在线文档；无源链接才回退本地渲染页
   if (doc.url) {
     window.open(doc.url, '_blank')

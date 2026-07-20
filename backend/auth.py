@@ -274,7 +274,11 @@ async def list_users(request: Request):
         caller = await cursor.fetchone()
         if not caller or caller["role"] != "admin":
             raise HTTPException(403, "无权限")
-        cursor = await db.execute("SELECT id, username, role, last_seen FROM users ORDER BY id")
+        # 按最后活跃时间倒序，最新登录/活跃的用户排在最前；从未活跃(last_seen NULL)沉底
+        cursor = await db.execute(
+            "SELECT id, username, role, last_seen FROM users "
+            "ORDER BY last_seen IS NULL, last_seen DESC, id DESC"
+        )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 

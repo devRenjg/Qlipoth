@@ -131,6 +131,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getDocuments, getDocument, deleteDocument,
   getTags, createTag, renameTag, deleteTag, setDocumentTags,
+  trackActivity,
 } from '../api/index.js'
 import { renderMarkdown } from '../utils/markdown.js'
 import { tagChipStyle, isActivityTag } from '../utils/tagColor.js'
@@ -240,6 +241,7 @@ async function loadTags() {
 }
 
 async function viewDoc(row) {
+  trackActivity('查看内容', `文档 ${row.original_name || ''}`)
   const { data } = await getDocument(row.id)
   currentDoc.value = data
   dialogVisible.value = true
@@ -247,6 +249,7 @@ async function viewDoc(row) {
 
 // 企微重导过的文档：新版/旧版分别开后端渲染页对比
 function viewVersion(row, which) {
+  trackActivity('查看内容', `文档${which === 'old' ? '旧版' : '新版'} ${row.original_name || row.stored_path || ''}`)
   const name = encodeURIComponent(row.stored_path)
   const path = which === 'old' ? `/api/documents/view-old/${name}` : `/api/documents/view/${name}`
   window.open(path, '_blank')

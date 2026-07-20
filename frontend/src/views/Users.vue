@@ -2,7 +2,6 @@
   <div class="users-view">
     <h2>用户管理</h2>
     <el-table :data="users" stripe v-loading="loading" empty-text="暂无用户">
-      <el-table-column prop="id" label="ID" width="60" />
       <el-table-column prop="username" label="用户名" />
       <el-table-column prop="role" label="角色" width="120">
         <template #default="{ row }">
@@ -89,7 +88,7 @@ async function openActivity(row) {
 }
 
 function actTag(action) {
-  return { '问答': '', '生成清单': 'success', '导出清单': 'warning', '导入文档': 'info', '删除文档': 'danger' }[action] || 'info'
+  return { '问答': '', '生成清单': 'success', '导出清单': 'warning', '导入文档': 'info', '删除文档': 'danger', '访问页面': '', '查看内容': 'success', '登录': 'info' }[action] || 'info'
 }
 
 onMounted(loadUsers)

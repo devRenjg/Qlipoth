@@ -239,6 +239,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, inject } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { trackActivity } from '../api'
 
 const currentUser = inject('currentUser', null)
 const isAdmin = computed(() => currentUser?.value?.role === 'admin')
@@ -661,7 +662,10 @@ const canGoNext = computed(() => {
   else a.setDate(a.getDate() + 7)
   return canGoNextTo(a)
 })
-function openDetail(s) { detail.value = s; drawer.value = true }
+function openDetail(s) {
+  trackActivity('查看内容', `直播场次 ${s.title || ''}${s.anchor_name ? ' - ' + s.anchor_name : ''}`)
+  detail.value = s; drawer.value = true
+}
 function openDay(cell) { dayCell.value = cell; dayDialog.value = true }
 function enterRoom() { if (detail.value?.room_url) window.open(detail.value.room_url, '_blank') }
 

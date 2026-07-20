@@ -767,8 +767,7 @@ async def list_conversations(user_id: int | None = None, limit: int = 50, user: 
 @router.get("/chat/conversation/{conversation_id}")
 async def get_conversation(conversation_id: str, user: dict = Depends(require_login)):
     """单会话全部轮次，按 id ASC（同秒不乱序）。legacy-{id} 为历史单轮伪会话。
-    非管理员仅能读本人会话(防按 conversation_id/legacy-id 越权读他人内容)。"""
-    own_only = user["role"] not in ("admin", "super")
+    全员可读所有人会话(与会话列表一致：历史对话对所有访问者公开)。"""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         if conversation_id.startswith("legacy-"):
@@ -776,31 +775,17 @@ async def get_conversation(conversation_id: str, user: dict = Depends(require_lo
                 row_id = int(conversation_id.removeprefix("legacy-"))
             except ValueError:
                 return []
-            if own_only:
-                cursor = await db.execute(
-                    "SELECT h.*, u.username AS user_name FROM chat_history h "
-                    "LEFT JOIN users u ON h.user_id = u.id WHERE h.id = ? AND h.user_id = ?",
-                    (row_id, user["id"]),
-                )
-            else:
-                cursor = await db.execute(
-                    "SELECT h.*, u.username AS user_name FROM chat_history h "
-                    "LEFT JOIN users u ON h.user_id = u.id WHERE h.id = ?",
-                    (row_id,),
-                )
+            cursor = await db.execute(
+                "SELECT h.*, u.username AS user_name FROM chat_history h "
+                "LEFT JOIN users u ON h.user_id = u.id WHERE h.id = ?",
+                (row_id,),
+            )
         else:
-            if own_only:
-                cursor = await db.execute(
-                    "SELECT h.*, u.username AS user_name FROM chat_history h "
-                    "LEFT JOIN users u ON h.user_id = u.id WHERE h.conversation_id = ? AND h.user_id = ? ORDER BY h.id ASC",
-                    (conversation_id, user["id"]),
-                )
-            else:
-                cursor = await db.execute(
-                    "SELECT h.*, u.username AS user_name FROM chat_history h "
-                    "LEFT JOIN users u ON h.user_id = u.id WHERE h.conversation_id = ? ORDER BY h.id ASC",
-                    (conversation_id,),
-                )
+            cursor = await db.execute(
+                "SELECT h.*, u.username AS user_name FROM chat_history h "
+                "LEFT JOIN users u ON h.user_id = u.id WHERE h.conversation_id = ? ORDER BY h.id ASC",
+                (conversation_id,),
+            )
         rows = await cursor.fetchall()
         return [
             {
@@ -830,3 +815,19 @@ async def delete_chat_history(history_id: int, user: dict = Depends(require_logi
         await db.execute("DELETE FROM chat_history WHERE id = ?", (history_id,))
         await db.commit()
     return {"message": "deleted"}
+
+
+class TrackReq(BaseModel):
+    action: str            # 必须命中 TRACKABLE_ACTIONS 白名单
+    detail: str = ""       # 页面 URL / 内容类型+标题
+
+
+@router.post("/activity/track")
+async def track_activity(req: TrackReq, user: dict = Depends(require_login)):
+    """前端埋点上报：页面访问、查看内容。匿名访客(id=0)也记。
+    只接受白名单动作，防止任意写入脏动作。"""
+    from activity import log_activity, TRACKABLE_ACTIONS
+    if req.action not in TRACKABLE_ACTIONS:
+        raise HTTPException(400, "不支持的动作类型")
+    await log_activity(user["id"], user.get("username", ""), req.action, req.detail)
+    return {"ok": True}

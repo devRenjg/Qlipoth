@@ -178,7 +178,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   generateChecklist, getChecklistProgress, listChecklists, getChecklist,
   updateChecklistItem, addChecklistItem, deleteChecklistItem, deleteChecklist,
-  exportChecklistToWecom,
+  exportChecklistToWecom, trackActivity,
 } from '../api/index.js'
 import { colorForTag } from '../utils/tagColor.js'
 import { DIMENSION_LABELS } from '../dimensions.js'
@@ -339,6 +339,7 @@ async function openChecklist(id) {
   try {
     const { data } = await getChecklist(id)
     activeChecklist.value = data
+    trackActivity('查看内容', `保障清单 ${data.checklist?.title || id}`)
     // 默认全部折叠收拢，用户点哪个展开哪个（与作战地图一致）
     openDims.value = []
   } catch (e) { ElMessage.error('打开清单失败') }

@@ -13,6 +13,11 @@ ACT_CHECKLIST_EXPORT = "导出清单"
 ACT_DOC_IMPORT = "导入文档"
 ACT_DOC_DELETE = "删除文档"
 ACT_LOGIN = "登录"
+ACT_PAGE_VIEW = "访问页面"      # 前端路由切换上报：detail = 页面名 URL
+ACT_VIEW_CONTENT = "查看内容"    # 看详情动作上报：detail = 内容类型 + 标题/URL
+
+# 允许前端 track 接口上报的动作白名单（防止任意写入脏动作）
+TRACKABLE_ACTIONS = {ACT_PAGE_VIEW, ACT_VIEW_CONTENT}
 
 
 async def log_activity(user_id, username: str, action: str, detail: str = ""):
