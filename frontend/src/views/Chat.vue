@@ -201,9 +201,8 @@ onMounted(() => { loadConversations(); loadTags() })
 
 async function loadConversations() {
   try {
-    const role = currentUser?.value?.role
-    const userId = (role === 'admin' || role === 'super') ? null : currentUser?.value?.id
-    const { data } = await getConversations(userId)
+    // 全员可见所有人的会话历史（不按当前用户过滤）
+    const { data } = await getConversations()
     conversations.value = data
   } catch {}
 }

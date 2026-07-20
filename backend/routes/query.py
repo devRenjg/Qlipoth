@@ -671,9 +671,7 @@ async def save_chat_history(req: SaveHistoryRequest, user: dict = Depends(requir
 
 @router.get("/chat/history")
 async def get_chat_history(user_id: int | None = None, limit: int = 50, user: dict = Depends(require_login)):
-    """Get chat history. 非管理员只能看自己的；管理员可传 user_id 或看全部。"""
-    if user["role"] not in ("admin", "super"):
-        user_id = user["id"]   # 普通用户强制只看本人，忽略客户端传入
+    """Get chat history. 全员可见所有人历史；传 user_id 可按指定用户过滤（管理员筛选用）。"""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         if user_id:
@@ -703,9 +701,7 @@ async def get_chat_history(user_id: int | None = None, limit: int = 50, user: di
 
 @router.get("/chat/conversations")
 async def list_conversations(user_id: int | None = None, limit: int = 50, user: dict = Depends(require_login)):
-    """会话分组列表。非管理员只看本人；管理员可传 user_id 或看全部。"""
-    if user["role"] not in ("admin", "super"):
-        user_id = user["id"]
+    """会话分组列表。全员可见所有人会话；传 user_id 可按指定用户过滤（管理员筛选用）。"""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         user_filter = "AND h.user_id = ?" if user_id else ""
