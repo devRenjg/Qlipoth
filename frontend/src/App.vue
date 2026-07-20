@@ -71,11 +71,11 @@
         </template>
         <template v-else-if="user && user.is_sso">
           <span class="username">{{ user.username }}</span>
-          <el-button size="small" text type="info" @click="openLogin">登录</el-button>
+          <el-button size="small" text type="info" @click="openLogin">管理</el-button>
         </template>
         <template v-else>
           <span class="username anonymous">访客</span>
-          <el-button size="small" text type="info" @click="openLogin">登录</el-button>
+          <el-button size="small" text type="info" @click="openLogin">管理</el-button>
         </template>
       </div>
     </el-header>
