@@ -137,6 +137,11 @@ export function getConversation(conversationId) {
   return api.get(`/chat/conversation/${conversationId}`)
 }
 
+// Route 2 重连：查某轮当前 status + 已生成 answer（内存任务优先，回退查库）
+export function getChatTurn(historyId) {
+  return api.get(`/chat/turn/${historyId}`)
+}
+
 export function deleteChatHistory(id) {
   return api.delete(`/chat/history/${id}`)
 }

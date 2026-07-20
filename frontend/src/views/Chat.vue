@@ -177,7 +177,7 @@ export default { name: 'Chat' }
 <script setup>
 import { ref, inject, nextTick, onMounted, onActivated, computed, watch } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
-import { queryKnowledgeBaseStream, getConversations, getConversation, saveChatHistory, getTags } from '../api/index.js'
+import { queryKnowledgeBaseStream, getConversations, getConversation, getChatTurn, getTags } from '../api/index.js'
 import { addProfilingRecord } from '../store/profiling.js'
 import { renderMarkdown } from '../utils/markdown.js'
 import { tagChipStyle, isActivityTag } from '../utils/tagColor.js'
@@ -195,6 +195,97 @@ const tags = ref([])
 const activityTags = computed(() => tags.value.filter(t => isActivityTag(t.name)))
 const topicTags = computed(() => tags.value.filter(t => !isActivityTag(t.name)))
 const selectedTagIds = ref([])
+
+// —— Route 2 后台生成：SSE 只是"订阅"，后端独立跑生成并落库 ——
+// activeController：当前 SSE 的中止句柄。切会话时中止订阅（后端继续生成），不丢数据。
+// pollCancel：重连轮询的取消函数。切回"生成中"的会话/刷新后，轮询 /chat/turn 续显。
+let activeController = null
+let pollCancel = null
+
+function stopActiveStream() {
+  if (activeController) { try { activeController.abort() } catch {} activeController = null }
+}
+function stopPoll() {
+  if (pollCancel) { pollCancel(); pollCancel = null }
+}
+
+// 由 chat_history 轮次构建消息数组（DB 为准）。带 historyId + status，供重连识别"生成中"的轮次。
+function buildMessagesFromTurns(turns) {
+  const msgs = []
+  for (const turn of turns) {
+    msgs.push({ role: 'user', text: turn.question })
+    const status = turn.status || 'done'
+    let text = turn.answer || ''
+    if (status === 'error' && !text) text = '（回答生成被中断，请重新提问）'
+    msgs.push({
+      role: 'assistant',
+      text,
+      html: formatMarkdown(text),
+      sourceUrls: turn.source_urls || [],
+      images: [],
+      timing: null,
+      historyId: turn.id,
+      status,
+    })
+  }
+  return msgs
+}
+
+// 重连"生成中"轮次：轮询只读接口 /chat/turn/{id} 续显，直到 done/error。绝不重新触发生成。
+function reconnectTurn(msg) {
+  if (!msg || !msg.historyId) return
+  stopPoll()
+  loading.value = true
+  let cancelled = false
+  pollCancel = () => { cancelled = true }
+  const tick = async () => {
+    if (cancelled) return
+    let stop = false
+    try {
+      const { data } = await getChatTurn(msg.historyId)
+      if (data.answer != null && data.answer !== msg.text) {
+        msg.text = data.answer
+        msg.html = formatMarkdown(data.answer)
+        scrollToBottom()
+      }
+      if (data.status && data.status !== 'generating') {
+        msg.status = data.status
+        if (data.status === 'error' && !msg.text) {
+          msg.text = '（回答生成被中断，请重新提问）'
+          msg.html = formatMarkdown(msg.text)
+        }
+        if (data.timing) msg.timing = data.timing
+        stop = true
+      }
+    } catch {
+      stop = true  // 记录不存在/网络异常 → 停止轮询
+    }
+    if (cancelled) return
+    if (stop) {
+      pollCancel = null
+      loading.value = false
+      scrollToBottom()
+      loadConversations()
+      return
+    }
+    setTimeout(tick, 800)
+  }
+  tick()
+}
+
+// 刷新/重开后以 DB 为准重载当前会话，并对未完成轮次重连。
+async function reloadCurrentConversation() {
+  const cid = conversationId.value
+  if (!cid || cid.startsWith('legacy-')) return
+  try {
+    const { data } = await getConversation(cid)
+    if (!data || !data.length) return
+    messages.value = buildMessagesFromTurns(data)
+    const last = messages.value[messages.value.length - 1]
+    if (last && last.role === 'assistant' && last.status === 'generating') reconnectTurn(last)
+    await scrollToBottom()
+  } catch {}
+}
 
 const presetQuestions = [
   '示例活动的值班安排是怎样的，多少人？',
@@ -255,15 +346,26 @@ function clearDraft() {
   try { localStorage.removeItem(draftKey()) } catch {}
 }
 
-onMounted(() => {
-  // 内存空(首次进入/刷新重开)时尝试恢复本地草稿；keep-alive 切回不会走 onMounted。
-  if (!messages.value.length) restoreDraft()
+onMounted(async () => {
+  // 内存空(首次进入/刷新重开)时：先恢复本地草稿拿回 conversationId，
+  // 再以 DB 为准重载该会话——若上次是"生成中"被刷新打断，后端仍在跑，这里会重连续显。
+  if (!messages.value.length) {
+    restoreDraft()
+    await reloadCurrentConversation()
+  }
   loadConversations()
   loadTags()
 })
 
-// keep-alive 激活(切回 Tab):内存态本就还在,无需恢复;仅回到底部改善体验。
-onActivated(() => { scrollToBottom() })
+// keep-alive 激活(切回 Tab)：内存态还在，无需重载。但若当前会话末轮仍是"生成中"
+// 且没有活跃订阅/轮询(例如曾切走会话)，补一次重连续显，保证切回能看到最新进度。
+onActivated(() => {
+  const last = messages.value[messages.value.length - 1]
+  if (last && last.role === 'assistant' && last.status === 'generating' && !activeController && !pollCancel) {
+    reconnectTurn(last)
+  }
+  scrollToBottom()
+})
 
 // 对话内容/会话/标签变化 → 写本地草稿。流式生成时 chunk 高频触发，做 300ms 防抖降低写入频率。
 let saveTimer = null
@@ -300,27 +402,26 @@ function tagStyle(t) {
 }
 
 async function loadConversation(item) {
+  // 切会话：中止当前 SSE 订阅与轮询（后端后台任务继续跑、不受影响），再载入目标会话。
+  stopActiveStream()
+  stopPoll()
+  loading.value = false
   try {
     const { data } = await getConversation(item.conversation_id)
-    const msgs = []
-    for (const turn of data) {
-      msgs.push({ role: 'user', text: turn.question })
-      msgs.push({
-        role: 'assistant',
-        text: turn.answer,
-        html: formatMarkdown(turn.answer),
-        sourceUrls: turn.source_urls || [],
-        timing: null,
-      })
-    }
-    messages.value = msgs
+    messages.value = buildMessagesFromTurns(data)
     // legacy 单轮伪会话不可续聊（无真实 conversation_id），续聊另起新会话
     conversationId.value = item.conversation_id.startsWith('legacy-') ? null : item.conversation_id
+    // 目标会话末轮若仍在生成 → 重连续显（后端在跑，DB 持续增量落库）
+    const last = messages.value[messages.value.length - 1]
+    if (last && last.role === 'assistant' && last.status === 'generating') reconnectTurn(last)
     await scrollToBottom()
   } catch {}
 }
 
 function newChat() {
+  stopActiveStream()
+  stopPoll()
+  loading.value = false
   messages.value = []
   conversationId.value = null
   input.value = ''
@@ -355,8 +456,8 @@ async function sendMessage() {
   loading.value = true
   await scrollToBottom()
 
-  const msgIdx = messages.value.length
-  messages.value.push({
+  // 绑定回调到消息对象引用(而非下标)：即便数组后续被重建，本次流仍写入正确对象。
+  const botMsg = {
     role: 'assistant',
     text: '',
     html: '',
@@ -364,37 +465,40 @@ async function sendMessage() {
     sourceUrls: [],
     images: [],
     timing: null,
-  })
+    historyId: null,
+    status: 'generating',
+  }
+  messages.value.push(botMsg)
 
-  let finalSourceUrls = []
-
-  queryKnowledgeBaseStream(question, {
+  // Route 2：后端已在后台落库，前端不再于 onDone 调 saveChatHistory(否则重复插入)。
+  // 切会话/刷新会中止本 SSE 订阅，但后端后台任务继续，重连轮询 /chat/turn 续显。
+  activeController = queryKnowledgeBaseStream(question, {
     onMeta(meta) {
-      messages.value[msgIdx].sources = meta.sources
-      messages.value[msgIdx].sourceUrls = meta.source_urls || []
-      messages.value[msgIdx].images = meta.relevant_images || []
-      finalSourceUrls = meta.source_urls || []
+      botMsg.sources = meta.sources
+      botMsg.sourceUrls = meta.source_urls || []
+      botMsg.images = meta.relevant_images || []
+      if (meta.history_id) botMsg.historyId = meta.history_id  // 拿到落库行 id，供重连
     },
     onChunk(chunk) {
-      messages.value[msgIdx].text += chunk
-      messages.value[msgIdx].html = formatMarkdown(messages.value[msgIdx].text)
+      botMsg.text += chunk
+      botMsg.html = formatMarkdown(botMsg.text)
       scrollToBottom()
     },
     onDone(timing) {
-      messages.value[msgIdx].timing = timing
+      botMsg.timing = timing
+      botMsg.status = 'done'
       addProfilingRecord(question, timing)
       loading.value = false
+      activeController = null
       scrollToBottom()
-      // Save to history
-      const answer = messages.value[msgIdx].text
-      const userId = currentUser?.value?.id || null
-      saveChatHistory(question, answer, finalSourceUrls, userId, convId, tagSnapshot)
-        .then(() => loadConversations()).catch(() => {})
+      loadConversations()  // 刷新侧栏(后端已落库)
     },
     onError(err) {
-      messages.value[msgIdx].text = err || '请求失败，请检查后端服务和 LLM 配置'
-      messages.value[msgIdx].html = ''
+      botMsg.text = err || '请求失败，请检查后端服务和 LLM 配置'
+      botMsg.html = formatMarkdown(botMsg.text)
+      botMsg.status = 'error'
       loading.value = false
+      activeController = null
     },
   }, convId, tagIds)
 }

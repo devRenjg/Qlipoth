@@ -7,6 +7,7 @@ from config import load_settings
 from question_router import route_model
 from database import DB_PATH
 from auth import require_login
+from generation import start_generation, subscribe, get_task
 from datetime import datetime, timezone, timedelta
 import aiosqlite
 import re
@@ -155,6 +156,46 @@ async def _tagged_stored_paths(tag_ids: list[int]) -> set[str]:
         )
         rows = await cursor.fetchall()
     return {r[0] for r in rows}
+
+
+async def _resolve_tag_snapshot(tag_ids: list[int]) -> list[dict]:
+    """把 tag_ids 解析成 [{id,name}] 快照，与前端保存 selected_tags 的结构一致。
+    空/无效返回 []。Route 2 后台落库时用它填 chat_history.selected_tags。"""
+    if not tag_ids:
+        return []
+    placeholders = ",".join("?" for _ in tag_ids)
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            f"SELECT id, name FROM tags WHERE id IN ({placeholders})",
+            tuple(tag_ids),
+        )
+        rows = await cursor.fetchall()
+    return [{"id": r["id"], "name": r["name"]} for r in rows]
+
+
+async def _load_turn(history_id: int) -> dict | None:
+    """查单轮 chat_history 行(含 status)，供 Route 2 状态查询/续显回退。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id, question, answer, source_urls, conversation_id, "
+            "selected_tags, created_at, status FROM chat_history WHERE id = ?",
+            (history_id,),
+        )
+        row = await cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "question": row["question"],
+        "answer": row["answer"],
+        "source_urls": json.loads(row["source_urls"]) if row["source_urls"] else [],
+        "selected_tags": _parse_tags(row["selected_tags"]),
+        "conversation_id": row["conversation_id"],
+        "created_at": row["created_at"],
+        "status": row["status"] or "done",
+    }
 
 
 def _filter_results_by_paths(results: "SearchResults", allowed: set[str]) -> "SearchResults":
@@ -595,8 +636,36 @@ async def query_knowledge_base_stream(req: QueryRequest, request: Request, user:
 
     answer_model, q_type = route_model(resolved_q, settings.llm_model, settings.llm_model_fast)
 
+    # Route 2：生成从连接生命周期剥离。先插占位行(status=generating)拿 history_id，
+    # 起后台任务跑 LLM + 增量落库；本 SSE 连接只是订阅 buffer 转发。客户端刷新/切会话/
+    # 关页只取消订阅，后台任务继续跑到完成并落库，重连/轮询能续显完整答案。
+    # 附加耗时(检索前置阶段)随终态 timing 一并返回。
+    extra_timing = {
+        "coref": round(coref_time, 2),
+        "strategy": round(strategy_llm_time, 2),
+        "search": round(t_search, 2),
+        "search_results_count": len(results),
+        "context_chars": len(search_text),
+    }
+    selected_tags_snapshot = await _resolve_tag_snapshot(req.tag_ids)
+    history_id = await start_generation(
+        user_id=user["id"],
+        question=req.question,
+        resolved_q=resolved_q,
+        search_text=search_text,
+        history_block=history_block,
+        model=answer_model,
+        source_urls=source_urls,
+        conversation_id=req.conversation_id,
+        selected_tags=selected_tags_snapshot,
+        t_start=t_start,
+        extra_timing=extra_timing,
+    )
+
     async def event_generator():
         meta = {
+            "history_id": history_id,
+            "conversation_id": req.conversation_id,
             "sources": sources,
             "source_urls": source_urls,
             "relevant_images": relevant_images,
@@ -616,26 +685,21 @@ async def query_knowledge_base_stream(req: QueryRequest, request: Request, user:
         }
         yield f"data: {json.dumps({'type': 'meta', 'data': meta}, ensure_ascii=False)}\n\n"
 
-        t0 = time.perf_counter()
-        try:
-            async for chunk in stream_answer(resolved_q, search_text, history_block=history_block, model=answer_model):
-                yield f"data: {json.dumps({'type': 'chunk', 'data': chunk}, ensure_ascii=False)}\n\n"
-        except RuntimeError as e:
-            yield f"data: {json.dumps({'type': 'error', 'data': str(e)}, ensure_ascii=False)}\n\n"
-            return
-
-        t_answer = time.perf_counter() - t0
-        t_total = time.perf_counter() - t_start
-        timing = {
-            "total": round(t_total, 2),
-            "coref": round(coref_time, 2),
-            "strategy": round(strategy_llm_time, 2),
-            "search": round(t_search, 2),
-            "answer": round(t_answer, 2),
-            "search_results_count": len(results),
-            "context_chars": len(search_text),
-        }
-        yield f"data: {json.dumps({'type': 'done', 'data': timing}, ensure_ascii=False)}\n\n"
+        async for kind, payload in subscribe(history_id):
+            if kind == "chunk":
+                yield f"data: {json.dumps({'type': 'chunk', 'data': payload}, ensure_ascii=False)}\n\n"
+            elif kind == "done":
+                yield f"data: {json.dumps({'type': 'done', 'data': payload}, ensure_ascii=False)}\n\n"
+            elif kind == "error":
+                yield f"data: {json.dumps({'type': 'error', 'data': payload}, ensure_ascii=False)}\n\n"
+            elif kind == "gone":
+                # 后台任务已不在活跃注册表(异常时序)，回退查库给终态
+                turn = await _load_turn(history_id)
+                if turn and turn["status"] == "done":
+                    yield f"data: {json.dumps({'type': 'chunk', 'data': turn['answer']}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'data': {}}, ensure_ascii=False)}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'error', 'data': '生成任务已结束'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -796,9 +860,35 @@ async def get_conversation(conversation_id: str, user: dict = Depends(require_lo
                 "selected_tags": _parse_tags(row["selected_tags"]),
                 "created_at": row["created_at"],
                 "user_name": row["user_name"] or "匿名",
+                "status": (row["status"] if "status" in row.keys() else None) or "done",
             }
             for row in rows
         ]
+
+
+@router.get("/chat/turn/{history_id}")
+async def get_turn_status(history_id: int, user: dict = Depends(require_login)):
+    """Route 2 状态查询：返回某轮当前 status + 已生成 answer。
+    优先取内存活跃任务(同进程内最实时)，无则回退查库。前端对 status=generating
+    的轮次轮询此接口续显，直到 done/error。"""
+    task = get_task(history_id)
+    if task is not None:
+        return {
+            "id": history_id,
+            "answer": task.text,
+            "status": task.status,
+            "timing": task.timing,
+        }
+    turn = await _load_turn(history_id)
+    if not turn:
+        raise HTTPException(404, "记录不存在")
+    return {
+        "id": turn["id"],
+        "answer": turn["answer"],
+        "status": turn["status"],
+        "source_urls": turn["source_urls"],
+        "timing": None,
+    }
 
 
 @router.delete("/chat/history/{history_id}")

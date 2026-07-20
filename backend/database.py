@@ -100,6 +100,16 @@ async def init_db():
             await db.execute("ALTER TABLE chat_history ADD COLUMN selected_tags TEXT")
         except Exception:
             pass
+        # Route 2 后台生成：status(generating/done/error) + updated_at 用于增量落库与卡死清理
+        # 默认 'done' 让存量历史行仍视为已完成
+        try:
+            await db.execute("ALTER TABLE chat_history ADD COLUMN status TEXT DEFAULT 'done'")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE chat_history ADD COLUMN updated_at TIMESTAMP")
+        except Exception:
+            pass
         try:
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_history(conversation_id, id)"
@@ -235,4 +245,17 @@ async def init_db():
                 await db.execute(ddl)
             except Exception:
                 pass
+        # 孤儿生成行清理：后端重启后，残留 status='generating' 的行其后台任务已随进程消亡、
+        # 无法续跑。诚实标记为 error；已增量落库的部分答案保留，全空的补中断提示（answer NOT NULL）。
+        try:
+            await db.execute(
+                "UPDATE chat_history SET answer = ? "
+                "WHERE status = 'generating' AND (answer IS NULL OR answer = '')",
+                ("（回答生成被中断，请重新提问）",),
+            )
+            await db.execute(
+                "UPDATE chat_history SET status = 'error' WHERE status = 'generating'"
+            )
+        except Exception:
+            pass
         await db.commit()
