@@ -559,13 +559,13 @@ async def query_knowledge_base_stream(req: QueryRequest, request: Request, user:
         except RuntimeError as e:
             raise HTTPException(502, f"LLM 搜索策略生成失败: {e}")
 
-    # 行为日志（尽力而为）：记录问答
+    # 行为日志（尽力而为）：记录问答。
+    # 用 require_login 解析出的 user(已含正式登录/内网 SSO 访客身份),
+    # 使问答序列能归属到具体内网用户;匿名访客(id=0)不落库避免污染。
     try:
-        from activity import log_activity, current_user_brief, ACT_QUERY
-        from auth import COOKIE_NAME
-        _u = await current_user_brief(request.cookies.get(COOKIE_NAME))
-        if _u:
-            await log_activity(_u.get("id"), _u.get("username"), ACT_QUERY, req.question[:120])
+        from activity import log_activity, ACT_QUERY
+        if user.get("id"):
+            await log_activity(user.get("id"), user.get("username"), ACT_QUERY, req.question[:120])
     except Exception:
         pass
 

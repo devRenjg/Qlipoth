@@ -184,11 +184,12 @@ import { colorForTag } from '../utils/tagColor.js'
 import { DIMENSION_LABELS } from '../dimensions.js'
 
 const currentUser = inject('currentUser')
-// 写权限：仅清单生成者本人可改（admin 也不例外）；无生成者(历史清单)放开给所有人
+// 写权限：仅清单生成者本人可改（admin 也不例外）；无生成者(历史清单)放开给所有登录用户。
+// 内网 SSO 访客(is_guest)非正式登录,写操作后端会 401,前端同步禁止编辑避免点击失败。
 function canEditList(cl) {
   if (!cl) return false
   const me = currentUser?.value
-  if (!me) return false
+  if (!me || me.is_guest) return false
   const owner = cl.created_by || ''
   return !owner || owner === me.username
 }
@@ -198,7 +199,10 @@ const canEditActive = computed(() => canEditList(activeChecklist.value?.checklis
 const activities = ['S赛', '春晚']
 // 同一用户每个活动只能有一份清单：已生成过的活动从下拉中隐藏（需先删除自己的清单才能重新生成）
 const availableActivities = computed(() => {
-  const me = currentUser?.value?.username
+  const cu = currentUser?.value
+  // 内网 SSO 访客非正式登录,不能生成清单(后端写操作会 401),不给生成选项
+  if (cu?.is_guest) return []
+  const me = cu?.username
   if (!me) return activities
   const mine = new Set(checklists.value.filter(c => c.created_by === me).map(c => c.activity))
   return activities.filter(a => !mine.has(a))

@@ -65,9 +65,13 @@
         <el-menu-item index="/openspec" v-if="effectiveRole === 'admin'">OpenSpec</el-menu-item>
       </el-menu>
       <div class="user-info">
-        <template v-if="user">
+        <template v-if="user && !user.is_guest">
           <span class="username">{{ user.username }}</span>
           <el-button size="small" text type="info" @click="handleLogout">退出</el-button>
+        </template>
+        <template v-else-if="user && user.is_sso">
+          <span class="username">{{ user.username }}</span>
+          <el-button size="small" text type="info" @click="openLogin">登录</el-button>
         </template>
         <template v-else>
           <span class="username anonymous">访客</span>

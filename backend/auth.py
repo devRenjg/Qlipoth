@@ -36,16 +36,94 @@ async def _user_from_token(request: Request) -> dict | None:
     return {"id": row["id"], "username": row["username"], "role": row["role"]} if row else None
 
 
+# ── 内网 SSO 访客身份 ──────────────────────────────────────────────
+# 公司内网员工浏览器带有 .internal.example 顶级域下的明文 cookie `username`(如 employee_id)。
+# nginx 反代默认透传 Cookie,后端直接读 request.cookies['username'] 拿到内网昵称。
+#
+# 🔴 安全边界(明文 cookie 可伪造,务必守住):
+#   - username 仅用于「显示昵称 + 问答归属」,绝不作为任何权限依据。
+#   - SSO 用户 role 恒为 'user',并带 is_guest=True → 所有写/删/导入/管理操作
+#     仍由各接口的 require_admin / _require_login(查 qlipoth_token) / is_guest 拦截。
+#   - SSO 用户走独立命名空间 bili_uid='sso:<name>',只按此列匹配,绝不按 username
+#     关联正式注册账号(否则伪造 username=admin 的 cookie 会命中正式 admin 账号提权)。
+SSO_COOKIE_NAME = "username"
+_SSO_UID_PREFIX = "sso:"
+# 明文昵称的合法字符,防止 cookie 注入奇怪值(内网用户名为英文/数字/下划线/点/连字符)
+_SSO_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{2,32}$")
+
+
+def _sanitize_sso_name(raw: str | None) -> str | None:
+    """校验并规整 SSO cookie 里的明文用户名,非法返回 None。"""
+    if not raw:
+        return None
+    name = raw.strip()
+    if not _SSO_NAME_RE.match(name):
+        return None
+    return name
+
+
+async def _sso_guest_from_cookie(request: Request) -> dict | None:
+    """从 .internal.example 的明文 username cookie 解析内网访客身份。
+    返回 {id, username, role:'user', is_guest:True, is_sso:True} 或 None。
+    会把该内网用户 upsert 到 users 表(独立命名空间),以便问答归属能落到具体人。"""
+    name = _sanitize_sso_name(request.cookies.get(SSO_COOKIE_NAME))
+    if not name:
+        return None
+    uid = _SSO_UID_PREFIX + name
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute(
+            "SELECT id, username FROM users WHERE bili_uid = ?", (uid,))).fetchone()
+        if row:
+            await db.execute(
+                "UPDATE users SET last_seen = ? WHERE id = ?", (_now_bj(), row["id"]))
+            await db.commit()
+            uid_id, uname = row["id"], row["username"]
+        else:
+            # 免密 SSO 用户:password_hash/salt NOT NULL,填占位值;token 留空(无正式登录态)。
+            # role 恒为 'user'。username 可能与正式账号同名,但 bili_uid 命名空间隔离,互不影响。
+            try:
+                cur = await db.execute(
+                    "INSERT INTO users (bili_uid, username, password_hash, password_salt, role, token, last_seen) "
+                    "VALUES (?, ?, '', '', 'user', NULL, ?)",
+                    (uid, name, _now_bj()),
+                )
+                await db.commit()
+                uid_id, uname = cur.lastrowid, name
+            except Exception:
+                # username UNIQUE 冲突(正式账号已占该名):退回按 bili_uid 再查一次;
+                # 仍无则用带后缀的展示名落库,保证 SSO 用户始终有独立行、绝不复用正式账号。
+                row2 = await (await db.execute(
+                    "SELECT id, username FROM users WHERE bili_uid = ?", (uid,))).fetchone()
+                if row2:
+                    uid_id, uname = row2["id"], row2["username"]
+                else:
+                    alt = f"{name}#sso"
+                    cur = await db.execute(
+                        "INSERT INTO users (bili_uid, username, password_hash, password_salt, role, token, last_seen) "
+                        "VALUES (?, ?, '', '', 'user', NULL, ?)",
+                        (uid, alt, _now_bj()),
+                    )
+                    await db.commit()
+                    uid_id, uname = cur.lastrowid, alt
+    return {"id": uid_id, "username": uname, "role": "user", "is_guest": True, "is_sso": True}
+
+
 # 访客身份:未登录用户默认以访客(普通用户权限)访问,不强制登录。
 # 只读及普通用户操作放行;写操作/管理操作仍由各接口的本人校验或 require_admin 拦截。
 GUEST_USER = {"id": 0, "username": "访客", "role": "user", "is_guest": True}
 
 
 async def require_login(request: Request) -> dict:
-    """统一登录依赖:未登录返回访客(普通用户权限),不再强制弹窗。
+    """统一登录依赖。身份优先级:正式 token 登录 > 内网 SSO 明文 cookie > 匿名访客。
     需要管理员/写权限的接口用 require_admin 或自行校验 user['id']/is_guest。"""
     u = await _user_from_token(request)
-    return u if u else dict(GUEST_USER)
+    if u:
+        return u
+    sso = await _sso_guest_from_cookie(request)
+    if sso:
+        return sso
+    return dict(GUEST_USER)
 
 
 async def require_admin(request: Request) -> dict:
@@ -97,20 +175,24 @@ class LoginRequest(BaseModel):
 
 @router.get("/user/me")
 async def get_current_user(request: Request):
-    """Get current user from cookie token."""
+    """Get current user. 优先级:正式 token 登录 > 内网 SSO 明文 cookie > 未登录(None)。
+    SSO 内网访客返回真实昵称 + is_guest/is_sso 标记,前端据此右上显示昵称、并保留登录入口。"""
     token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        return {"user": None}
+    if token:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT id, username, role FROM users WHERE token = ?", (token,))
+            row = await cursor.fetchone()
+            if row:
+                await db.execute("UPDATE users SET last_seen = ? WHERE id = ?", (_now_bj(), row["id"]))
+                await db.commit()
+                return {"user": {"id": row["id"], "username": row["username"], "role": row["role"]}}
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT id, username, role FROM users WHERE token = ?", (token,))
-        row = await cursor.fetchone()
-        if not row:
-            return {"user": None}
-        await db.execute("UPDATE users SET last_seen = ? WHERE id = ?", (_now_bj(), row["id"]))
-        await db.commit()
-        return {"user": {"id": row["id"], "username": row["username"], "role": row["role"]}}
+    sso = await _sso_guest_from_cookie(request)
+    if sso:
+        return {"user": {"id": sso["id"], "username": sso["username"], "role": "user",
+                         "is_guest": True, "is_sso": True}}
+    return {"user": None}
 
 
 @router.post("/user/register")
