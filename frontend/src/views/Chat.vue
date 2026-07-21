@@ -132,26 +132,6 @@
       </div>
       <div v-if="messages.length > 0" class="chat-input">
         <div class="input-wrapper">
-          <div v-if="tags.length" class="tag-filter tag-filter-compact">
-            <div v-if="activityTags.length" class="tag-row">
-              <span
-                v-for="t in activityTags"
-                :key="t.id"
-                class="tag-chip tag-chip-activity"
-                :style="tagStyle(t)"
-                @click="toggleTag(t.id)"
-              >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
-            </div>
-            <div class="tag-row">
-              <span
-                v-for="t in topicTags"
-                :key="t.id"
-                class="tag-chip"
-                :style="tagStyle(t)"
-                @click="toggleTag(t.id)"
-              >{{ t.name }} <em class="tag-chip-count">{{ t.doc_count }}</em></span>
-            </div>
-          </div>
           <el-input
             v-model="input"
             placeholder="输入你的问题..."
@@ -667,13 +647,6 @@ async function scrollToBottom() {
   font-size: 11px;
   opacity: 0.7;
 }
-.tag-filter-compact {
-  margin-top: 0;
-  margin-bottom: 10px;
-  align-items: flex-start;
-  max-width: none;
-}
-.tag-filter-compact .tag-row { flex-wrap: wrap; justify-content: flex-start; }
 .preset-tag {
   cursor: pointer;
   font-size: 13px;
