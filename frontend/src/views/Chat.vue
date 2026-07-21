@@ -661,7 +661,8 @@ async function scrollToBottom() {
   border-color: #4d6bfe !important;
   color: #4d6bfe !important;
 }
-.message { margin-bottom: 16px; display: flex; }
+/* 对话内容居中成 660px 列,与底部输入框对齐,整体感更强(ChatGPT/DeepSeek 风格) */
+.message { margin-bottom: 16px; display: flex; width: 660px; max-width: 100%; align-self: center; }
 .message.user { justify-content: flex-end; }
 .message.assistant { justify-content: flex-start; }
 .message-content {
@@ -675,10 +676,14 @@ async function scrollToBottom() {
   background: #4d6bfe;
   color: #ffffff;
 }
+/* 助手回答走 DeepSeek/ChatGPT 风格:无边框无底色,与页面融为一体,占满宽度 */
 .message.assistant .message-content {
-  background: #f7f7f8;
+  max-width: 100%;
+  width: 100%;
+  background: transparent;
   color: #1a1a2e;
-  border: 1px solid #e8e8e8;
+  border: none;
+  padding: 4px 0;
 }
 .message-text.markdown-body {
   background: transparent;
