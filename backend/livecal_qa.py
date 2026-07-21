@@ -14,7 +14,7 @@ from database import DB_PATH
 # 指标类:PCU、在线人数、观看时长、弹幕、涨粉、进房/DAU、预约
 _METRIC_RE = re.compile(
     r'PCU|pcu|在线人数|在线峰值|峰值|同时在线|观看时长|观看时间|弹幕|涨粉|新增粉丝|'
-    r'进房|入房|DAU|dau|预约|预约人数|热度|观看人数|人气', re.I)
+    r'进房|入房|DAU|dau|预约|预约人数|热度|观看人数|人气|OTT|ott|大屏|电视端|TV端|tv端', re.I)
 # 时间类:什么时候/哪天/几号/日期/时间(问场次发生时间)
 _TIME_RE = re.compile(r'什么时候|哪天|哪一天|几号|几月|日期|时间是|多会|啥时候')
 # 场次/直播实体类
@@ -139,7 +139,10 @@ def _fmt_session(r) -> str:
     d = str(r["session_time"])[:10]
     parts = [f"{d}", f"《{r['title']}》", f"直播间:{r['anchor_name'] or r['room_id'] or '—'}"]
     if r["pcu"]:
-        parts.append(f"PCU峰值:{_fmt_wan(r['pcu'])}")
+        parts.append(f"主端PCU峰值(App/Web):{_fmt_wan(r['pcu'])}")
+    # OTT PCU:大屏/TV端独立上报体系,与主端不同直播间、不与主端 PCU 打通、不可相加,单独标注
+    if r["ott_pcu"]:
+        parts.append(f"OTT PCU(大屏/TV端,独立口径):{_fmt_wan(r['ott_pcu'])}")
     if r["reservation"]:
         parts.append(f"预约:{_fmt_wan(r['reservation'])}")
     # 高热业务数据(有才带)
@@ -192,7 +195,7 @@ async def fetch_livecal_context(q: str, limit: int = 15) -> str | None:
     if not years and not terms and not lol_esports:
         return None
 
-    sql = (f"SELECT session_time,title,anchor_name,pcu,reservation,room_id,"
+    sql = (f"SELECT session_time,title,anchor_name,pcu,ott_pcu,reservation,room_id,"
            f"watch_hours_all,danmu_all,enter_dau_all,fans_growth_all,is_dirty,dirty_note "
            f"FROM live_sessions WHERE {' AND '.join(where)} "
            f"ORDER BY pcu DESC LIMIT {int(limit)}")
@@ -205,7 +208,11 @@ async def fetch_livecal_context(q: str, limit: int = 15) -> str | None:
         return None
 
     lines = [_fmt_session(r) for r in rows]
-    header = ("以下为【直播日历】数据库的精准场次数据(PCU=直播间同时在线峰值,"
-              "数据来自技术侧真实统计,按PCU降序)。请仅依据这些数据回答,"
-              "不要编造未列出的数字;若问题涉及的场次不在下列数据中,如实说明日历中暂无:")
+    header = ("以下为【直播日历】数据库的精准场次数据(数据来自技术侧真实统计,按主端PCU降序)。"
+              "字段说明:『主端PCU峰值(App/Web)』是手机/网页端直播间同时在线峰值;"
+              "『OTT PCU(大屏/TV端)』是电视大屏端独立上报体系,与主端不是同一个直播间、"
+              "不与主端PCU打通、两者相互独立不可相加。用户问『OTT PCU』时须答 OTT 那个值,"
+              "问普通『PCU』时答主端值;若某场只有主端值没有 OTT 值则说明该场无 OTT 数据。"
+              "请仅依据这些数据回答,不要编造未列出的数字;"
+              "若问题涉及的场次不在下列数据中,如实说明日历中暂无:")
     return header + "\n" + "\n".join(f"- {ln}" for ln in lines)
