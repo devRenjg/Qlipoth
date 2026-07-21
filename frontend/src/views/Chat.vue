@@ -184,6 +184,7 @@ let pollCancel = null
 
 function stopActiveStream() {
   if (activeController) { try { activeController.abort() } catch {} activeController = null }
+  resetRenderPump()  // 取消挂起的流式渲染帧，避免写入已切走的消息对象
 }
 function stopPoll() {
   if (pollCancel) { pollCancel(); pollCancel = null }
@@ -460,11 +461,13 @@ async function sendMessage() {
       if (meta.history_id) botMsg.historyId = meta.history_id  // 拿到落库行 id，供重连
     },
     onChunk(chunk) {
+      // 原始文本立即累加(落库/重连/草稿以此为准，不丢数据)，
+      // 但昂贵的全量 markdown 重解析+滚动交给帧节流泵，避免每个小增量都打爆主线程造成卡顿。
       botMsg.text += chunk
-      botMsg.html = formatMarkdown(botMsg.text)
-      scrollToBottom()
+      scheduleRender(botMsg)
     },
     onDone(timing) {
+      flushRender(botMsg)  // 收尾：立刻做一次完整渲染，确保末尾增量全部显示
       botMsg.timing = timing
       botMsg.status = 'done'
       addProfilingRecord(question, timing)
@@ -474,6 +477,7 @@ async function sendMessage() {
       loadConversations()  // 刷新侧栏(后端已落库)
     },
     onError(err) {
+      resetRenderPump()
       botMsg.text = err || '请求失败，请检查后端服务和 LLM 配置'
       botMsg.html = formatMarkdown(botMsg.text)
       botMsg.status = 'error'
@@ -481,6 +485,52 @@ async function sendMessage() {
       activeController = null
     },
   }, convId, tagIds)
+}
+
+// —— 流式渲染帧节流泵 ——
+// 问题:每个 SSE 增量都跑一次全量 markdown(marked+DOMPurify+图片正则)会随答案变长越来越慢(O(n²))，
+// 叠加每 chunk 的滚动布局抖动 → "一卡一卡"。
+// 方案:网络到达与渲染解耦。文本即时累加，渲染用 requestAnimationFrame 合并，
+// 且两次全量重解析间隔不小于 RENDER_MIN_MS，像 ChatGPT/DeepSeek 那样按帧平滑吐字。
+const RENDER_MIN_MS = 40
+let renderRaf = 0
+let renderPendingMsg = null
+let lastRenderAt = 0
+
+function doRender(msg) {
+  msg.html = formatMarkdown(msg.text)
+  lastRenderAt = performance.now()
+  scrollToBottom()
+}
+
+function scheduleRender(msg) {
+  renderPendingMsg = msg
+  if (renderRaf) return  // 本帧已排队，合并
+  const pump = () => {
+    renderRaf = 0
+    const m = renderPendingMsg
+    if (!m) return
+    const since = performance.now() - lastRenderAt
+    if (since < RENDER_MIN_MS) {
+      // 距上次重解析太近 → 推到下一帧，避免高频全量解析打爆主线程
+      renderRaf = requestAnimationFrame(pump)
+      return
+    }
+    renderPendingMsg = null
+    doRender(m)
+  }
+  renderRaf = requestAnimationFrame(pump)
+}
+
+// 收尾/出错:取消挂起帧，立刻把当前文本完整渲染一次(保证末尾增量不丢)。
+function flushRender(msg) {
+  if (renderRaf) { cancelAnimationFrame(renderRaf); renderRaf = 0 }
+  renderPendingMsg = null
+  if (msg) doRender(msg)
+}
+function resetRenderPump() {
+  if (renderRaf) { cancelAnimationFrame(renderRaf); renderRaf = 0 }
+  renderPendingMsg = null
 }
 
 function formatMarkdown(text) {
