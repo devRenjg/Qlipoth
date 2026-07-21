@@ -71,6 +71,7 @@
                 <span v-if="s.anchor_name" class="anchor">{{ s.anchor_name }}</span>
                 <span v-if="s.report_info?.creator" class="anchor">报备人 {{ s.report_info.creator }}<template v-if="s.report_info?.creator_first_dept">（{{ s.report_info.creator_first_dept }}）</template></span>
                 <span v-if="s.pcu!=null && hasPeakTime(s)" class="peak-time">峰值 {{ hhmm(s.session_time) }}</span>
+                <span v-else-if="isCrossNightPeak(s)" class="peak-time cross-night" title="跨夜直播:当天 PCU 峰值落在零点,真实高峰在前一晚(多为电竞/通宵直播承接前晚)">跨夜·零点达峰</span>
                 <span v-if="s.pcu!=null" class="pcu" :class="{ 'pcu-dirty': isDirty(s) }">PCU {{ fmt(s.pcu) }}</span>
                 <span v-if="s.ott_pcu!=null" class="ott-pcu">OTT PCU {{ fmt(s.ott_pcu) }}</span>
                 <span v-if="isDirty(s)" class="dirty-tag" title="PCU疑似口径异常">⚠️脏数据</span>
@@ -101,6 +102,7 @@
           <div class="dd-rows">
             <span v-if="s.anchor_name" class="dd-chip anchor">{{ s.anchor_name }}</span>
             <span v-if="s.pcu!=null && hasPeakTime(s)" class="dd-chip time">峰值 {{ hhmm(s.session_time) }}</span>
+            <span v-else-if="isCrossNightPeak(s)" class="dd-chip time cross-night" title="跨夜直播:当天 PCU 峰值落在零点,真实高峰在前一晚">跨夜·零点达峰</span>
             <span v-else-if="s.pcu==null" class="dd-chip time">开播 {{ hhmm(s.session_time) }}</span>
             <span v-if="s.pcu!=null" class="dd-chip pcu" :class="{ 'pcu-dirty': isDirty(s) }">{{ hasBizPcu(s) ? '技术 PCU' : 'PCU' }} {{ fmt(s.pcu) }}</span>
             <span v-if="hasBizPcu(s)" class="dd-chip pcu-biz" title="业务口径:登录用户 mid 去重 + 风控过滤后的在线人数">业务 PCU {{ fmt(s.pcu_business) }}</span>
@@ -172,6 +174,7 @@
         </div>
         <div v-else-if="isVip(detail)" class="vip-banner">★ 重点关注直播场次</div>
         <div class="d-row" v-if="(detail.pcu!=null && hasPeakTime(detail)) || (detail.pcu==null && showStartTime(detail))"><span class="d-lbl">{{ detail.pcu!=null ? 'PCU 峰值' : '开播时间' }}</span><span>{{ detail.session_time }}</span></div>
+        <div class="d-row" v-else-if="isCrossNightPeak(detail)"><span class="d-lbl">PCU 峰值</span><span>{{ detail.session_time }}<i class="v-cal-note">（跨夜直播，峰值落在零点，真实高峰在前一晚）</i></span></div>
         <div class="d-row" v-if="detail.anchor_name"><span class="d-lbl">主播</span><span>{{ detail.anchor_name }}</span></div>
         <div class="d-row" v-if="detail.pcu!=null"><span class="d-lbl">{{ hasBizPcu(detail) ? '技术 PCU' : 'PCU' }}</span><span :class="{ 'v-dirty': isDirty(detail) }">{{ fmt(detail.pcu) }}<i v-if="hasBizPcu(detail)" class="v-cal-note">（长链原始在线，不去重不过风控）</i><i v-if="isDirty(detail)" class="v-dirty-note">（脏数据，疑似口径异常）</i></span></div>
         <div class="d-row" v-if="hasBizPcu(detail)"><span class="d-lbl">业务 PCU</span><span>{{ fmt(detail.pcu_business) }}<i class="v-cal-note">（登录 mid 去重 + 风控过滤）</i></span></div>
@@ -293,6 +296,16 @@ const hhmm = (t) => (t || '').slice(11, 16)   // 'YYYY-MM-DD HH:MM:SS' → 'HH:M
 const hasPeakTime = (s) => {
   const hms = (s.session_time || '').slice(11, 19)
   return !!hms && hms !== '00:00:00'
+}
+// 跨夜·零点达峰:2024-05-01 起的场次取自逐小时长链表(calc_time 为真实峰值时刻),
+// 若 PCU 峰值落在 00:00,说明当天在线人数从零点起即为最高——多为电竞/通宵直播承接
+// 前一晚高峰,真实活动高峰其实在前一晚。此时 00:00 是准确峰值时刻,不是缺失/占位。
+// 与 pre-2024-05-01 的 danmu_num 占位 00:00(无峰值时刻)区分,后者不展示时间。
+const isCrossNightPeak = (s) => {
+  if (s.pcu == null) return false
+  const d = (s.session_time || '').slice(0, 10)
+  const hms = (s.session_time || '').slice(11, 19)
+  return d >= '2024-05-01' && hms === '00:00:00'
 }
 // 是否展示技术/业务双口径 PCU:仅 2026-04-01 起的场次同时存了技术(pcu=origin)与
 // 业务(pcu_business=logic_count_real)两口径,此时详情区把 pcu 标注为「技术 PCU」并额外
@@ -756,6 +769,9 @@ onBeforeUnmount(() => {
 .sess-metric .anchor { color:#7a6ad0; }
 
 .sess-metric .peak-time { color:#2f6bd6; font-weight:600; }
+/* 跨夜·零点达峰:偏中性的靛紫,和普通蓝色峰值时间区分,提示这是跨夜承接而非精确时刻 */
+.sess-metric .peak-time.cross-night { color:#7a5cc0; font-weight:600; font-size:11px; }
+.dd-chip.time.cross-night { background:#f0ecfa; color:#7a5cc0; }
 .sess-metric .pcu { color: #b3701a; font-weight: 600; }
 .sess-metric .ott-pcu { color: #b3701a; font-weight: 600; }
 .sess-metric .rsv { color: #2f9e5e; font-weight: 700; font-size: 14px; }
