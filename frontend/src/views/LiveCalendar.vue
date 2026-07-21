@@ -71,7 +71,7 @@
                 <span v-if="s.anchor_name" class="anchor">{{ s.anchor_name }}</span>
                 <span v-if="s.report_info?.creator" class="anchor">报备人 {{ s.report_info.creator }}<template v-if="s.report_info?.creator_first_dept">（{{ s.report_info.creator_first_dept }}）</template></span>
                 <span v-if="s.pcu!=null && hasPeakTime(s)" class="peak-time">峰值 {{ hhmm(s.session_time) }}</span>
-                <span v-else-if="isCrossNightPeak(s)" class="peak-time cross-night" title="跨夜直播:当天 PCU 峰值落在零点,真实高峰在前一晚(多为电竞/通宵直播承接前晚)">跨夜·零点达峰</span>
+                <span v-else-if="isCrossNightPeak(s)" class="peak-time" title="跨夜直播:当天 PCU 峰值落在零点,真实高峰在前一晚(多为电竞/通宵直播承接前晚)">峰值 {{ hhmm(s.session_time) }}</span>
                 <span v-if="s.pcu!=null" class="pcu" :class="{ 'pcu-dirty': isDirty(s) }">PCU {{ fmt(s.pcu) }}</span>
                 <span v-if="s.ott_pcu!=null" class="ott-pcu">OTT PCU {{ fmt(s.ott_pcu) }}</span>
                 <span v-if="isDirty(s)" class="dirty-tag" title="PCU疑似口径异常">⚠️脏数据</span>
@@ -102,7 +102,7 @@
           <div class="dd-rows">
             <span v-if="s.anchor_name" class="dd-chip anchor">{{ s.anchor_name }}</span>
             <span v-if="s.pcu!=null && hasPeakTime(s)" class="dd-chip time">峰值 {{ hhmm(s.session_time) }}</span>
-            <span v-else-if="isCrossNightPeak(s)" class="dd-chip time cross-night" title="跨夜直播:当天 PCU 峰值落在零点,真实高峰在前一晚">跨夜·零点达峰</span>
+            <span v-else-if="isCrossNightPeak(s)" class="dd-chip time" title="跨夜直播:当天 PCU 峰值落在零点,真实高峰在前一晚">峰值 {{ hhmm(s.session_time) }}</span>
             <span v-else-if="s.pcu==null" class="dd-chip time">开播 {{ hhmm(s.session_time) }}</span>
             <span v-if="s.pcu!=null" class="dd-chip pcu" :class="{ 'pcu-dirty': isDirty(s) }">{{ hasBizPcu(s) ? '技术 PCU' : 'PCU' }} {{ fmt(s.pcu) }}</span>
             <span v-if="hasBizPcu(s)" class="dd-chip pcu-biz" title="业务口径:登录用户 mid 去重 + 风控过滤后的在线人数">业务 PCU {{ fmt(s.pcu_business) }}</span>
@@ -769,9 +769,6 @@ onBeforeUnmount(() => {
 .sess-metric .anchor { color:#7a6ad0; }
 
 .sess-metric .peak-time { color:#2f6bd6; font-weight:600; }
-/* 跨夜·零点达峰:偏中性的靛紫,和普通蓝色峰值时间区分,提示这是跨夜承接而非精确时刻 */
-.sess-metric .peak-time.cross-night { color:#7a5cc0; font-weight:600; font-size:11px; }
-.dd-chip.time.cross-night { background:#f0ecfa; color:#7a5cc0; }
 .sess-metric .pcu { color: #b3701a; font-weight: 600; }
 .sess-metric .ott-pcu { color: #b3701a; font-weight: 600; }
 .sess-metric .rsv { color: #2f9e5e; font-weight: 700; font-size: 14px; }
