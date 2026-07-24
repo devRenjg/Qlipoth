@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 from database import DB_PATH
-from auth import require_login
+from auth import require_login, require_admin
 
 router = APIRouter(tags=["live-calendar"])
 
@@ -153,14 +153,12 @@ def _run_report_refresh() -> dict:
 
 
 @router.post("/live-calendar/refresh-reports")
-async def refresh_reports(user: dict = Depends(require_login)):
+async def refresh_reports(user: dict = Depends(require_admin)):
     """手动刷新"报备场次"(同步,无入参)。刷新【今天 ~ 今天+10天】(可调)的报备单最新状态,
     幂等回写该直播日期窗口内 live_sessions 的 is_report=1 行,不触碰 PCU/预约等非报备场次、
     也不动窗口外的历史报备行。并发时返回 409;取数模块未部署返回 503;外部拉取异常返回 502。
-    访客(未登录)不允许触发,返回 401。
+    仅管理员(admin)可触发:未登录返回 401,非 admin 返回 403(由 require_admin 统一拦截)。
     返回契约:{ ok, total, updated, failed, elapsed_ms, errors[], by_type{}, window{start,end,forward_days,...} }。"""
-    if user.get("is_guest"):
-        raise HTTPException(status_code=401, detail="请先登录后再刷新报备场次")
     if _refresh_lock.locked():
         raise HTTPException(status_code=409, detail="报备刷新正在进行中，请稍候再试")
     async with _refresh_lock:

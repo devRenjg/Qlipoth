@@ -13,7 +13,7 @@
           <span class="caliber-icon" aria-hidden="true">📊</span>
           数据口径说明
         </el-button>
-        <el-tooltip v-if="isLoggedIn" :content="reportRefreshTooltip" placement="bottom">
+        <el-tooltip v-if="isAdmin" :content="reportRefreshTooltip" placement="bottom">
           <span class="refresh-report-trigger" @click="refreshReports">
             <el-button
               class="refresh-report-btn"
@@ -245,10 +245,8 @@ import { ElMessage } from 'element-plus'
 import { trackActivity } from '../api'
 
 const currentUser = inject('currentUser', null)
+// 报备刷新按钮仅管理员可见可点:写操作限管理员,后端 require_admin 同步拦截(非 admin 403)。
 const isAdmin = computed(() => currentUser?.value?.role === 'admin')
-// 访客(未登录/内网SSO明文cookie)不允许刷新报备场次:写操作需正式账号登录。
-// SSO 内网访客 is_guest=true,后端也会 403,前端同步隐藏按钮避免点击失败。
-const isLoggedIn = computed(() => !!currentUser?.value?.id && !currentUser?.value?.is_guest)
 // 审批单据链接(仅管理员可见,用于人工校准报备数据)。
 // 内部域名走环境变量脱敏,公开仓库不含真实地址;本地 .env.local 配 VITE_SHENPI_URL 即可。
 const SHENPI_URL = import.meta.env.VITE_SHENPI_URL || ''
