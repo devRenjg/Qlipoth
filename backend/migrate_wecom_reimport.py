@@ -292,7 +292,7 @@ def _stats() -> dict:
             todo += 1
             if fn in fails:
                 todo_tried += 1
-        else:                     # 无企微链接(内部 wiki 等) → 不走API
+        else:                     # 无企微链接(内部 wiki 文档等) → 不走API
             info += 1
     return {"total": total, "done": done, "pending_total": pending,
             "info": info, "mind": mind, "todo": todo,
