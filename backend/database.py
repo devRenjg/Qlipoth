@@ -240,6 +240,9 @@ async def init_db():
         # (logic_count_real)备用。历史扩展列(ott_pcu/is_dirty 等)由运维脚本 ALTER,此处补登记新列。
         for col, ddl in [
             ("pcu_business", "ALTER TABLE live_sessions ADD COLUMN pcu_business INTEGER"),
+            # hidden=1 的场次在日历/精准问答中完全不展示(测试/预告/极小众无真实数据场次)。
+            # 与 is_dirty(打删除线保留展示)区分:hidden 是彻底不显示,原值仍保留可回滚。
+            ("hidden", "ALTER TABLE live_sessions ADD COLUMN hidden INTEGER DEFAULT 0"),
         ]:
             try:
                 await db.execute(ddl)

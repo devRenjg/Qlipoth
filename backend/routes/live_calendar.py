@@ -183,6 +183,7 @@ async def list_sessions(start: str, end: str, user: dict = Depends(require_login
             "enter_dau_fans, enter_dau_all, fans_growth_fans, fans_growth_all, "
             "is_report, report_info, is_dirty, dirty_note, ott_pcu "
             "FROM live_sessions WHERE session_time >= ? AND session_time <= ? "
+            "AND COALESCE(hidden, 0) = 0 "
             "ORDER BY session_time ASC",
             (start, end + " 23:59:59" if len(end) == 10 else end),
         )).fetchall()
