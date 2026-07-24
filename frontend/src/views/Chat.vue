@@ -271,7 +271,7 @@ async function reloadCurrentConversation() {
 const presetQuestions = [
   'S15 总决赛 PCU 多少啊？',
   '2026 春晚总共有多少需求，大概是哪些方向的内容？',
-  '2026 春晚需求上线后的版本覆盖率多少，对比上次如何？',
+  '2026 春晚版本覆盖率多少，对比去年如何？',
 ]
 
 // —— 当前对话本地持久化：切 Tab(keep-alive)已能保住内存态；此处再抗刷新/关页重开 ——

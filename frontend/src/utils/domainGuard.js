@@ -1,15 +1,18 @@
 // IP 直连拦截：产品已迁到正式域名，非正式域名(且非本地开发)访问时整页替换为提示页。
 // 纯 DOM 实现，不依赖 Vue/Element，确保在应用加载前最早生效。
 
-// 正式域名(平台 nginx 反代入口)。若将来换域名，改这里即可。
-export const OFFICIAL_HOST = 'internal.example.local'
-export const OFFICIAL_URL = 'https://internal.example.local/'
+// 正式域名(平台 nginx 反代入口)。从环境变量注入，仓库不含真实地址。
+// 部署时在 .env.local / 构建环境设置 VITE_OFFICIAL_HOST 与 VITE_OFFICIAL_URL。
+export const OFFICIAL_HOST = import.meta.env.VITE_OFFICIAL_HOST || ''
+export const OFFICIAL_URL = import.meta.env.VITE_OFFICIAL_URL || ''
 
 // 本地开发放行(vite dev / 后端联调)，不拦截。
 const LOCAL_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '::1']
 
 // 是否为允许访问的 Host：正式域名 或 本地开发。
+// 未配置正式域名时(OFFICIAL_HOST 为空)不启用拦截，放行所有 Host。
 export function isAllowedHost() {
+  if (!OFFICIAL_HOST) return true
   const host = window.location.hostname || ''
   if (host === OFFICIAL_HOST) return true
   if (LOCAL_HOSTS.includes(host)) return true

@@ -37,7 +37,7 @@ async def _user_from_token(request: Request) -> dict | None:
 
 
 # ── 内网 SSO 访客身份 ──────────────────────────────────────────────
-# 公司内网员工浏览器带有 .internal.example 顶级域下的明文 cookie `username`(如 employee_id)。
+# 企业内网员工浏览器在内网顶级域下带有明文 cookie `username`(如 employee_id)。
 # nginx 反代默认透传 Cookie,后端直接读 request.cookies['username'] 拿到内网昵称。
 #
 # 🔴 安全边界(明文 cookie 可伪造,务必守住):
@@ -63,7 +63,7 @@ def _sanitize_sso_name(raw: str | None) -> str | None:
 
 
 async def _sso_guest_from_cookie(request: Request) -> dict | None:
-    """从 .internal.example 的明文 username cookie 解析内网访客身份。
+    """从企业内网顶级域的明文 username cookie 解析内网访客身份。
     返回 {id, username, role:'user', is_guest:True, is_sso:True} 或 None。
     会把该内网用户 upsert 到 users 表(独立命名空间),以便问答归属能落到具体人。"""
     name = _sanitize_sso_name(request.cookies.get(SSO_COOKIE_NAME))
